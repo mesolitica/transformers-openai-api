@@ -45,7 +45,7 @@ MODELS=`[
     "userMessageEndToken": " [/INST] ",
     "assistantMessageToken": "",
     "assistantMessageEndToken": " </s><s>[INST] ",
-    "preprompt": "return result only, no need to explain, ALWAYS RETURN RESULT.",
+    "preprompt": "Anda adalah pembantu AI yang berguna dan mampu jawab segala soalan yang diberikan. Jawapan yang diberikan haruslah panjang dan tepat.",
     "chatPromptTemplate" : "<s>[INST] <<SYS>>\n{{preprompt}}\n<</SYS>>\n\n{{#each messages}}{{#ifUser}}{{content}} [/INST] {{/ifUser}}{{#ifAssistant}}{{content}} </s><s>[INST] {{/ifAssistant}}{{/each}}",
     "messageEndToken": "</s>",
     "promptExamples": [
@@ -80,6 +80,8 @@ docker-compose -f chatui.yaml up --build
 
 3. Access ChatUI at http://localhost:7070
 
-<img src="image1.png" width="800px">
+<img src="new-image1.png" width="800px">
 
-<img src="image2.png" width="800px">
+<img src="new-image2.png" width="800px">
+
+<img src="new-image3.png" width="800px">
