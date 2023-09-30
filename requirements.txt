@@ -1,0 +1,8 @@
+accelerate==0.21.0
+peft==0.4.0
+bitsandbytes==0.41.1
+transformers==4.33.1
+tokenizers==0.13.3
+wandb==0.15.8
+evaluate==0.4.0
+scipy==1.11.2
