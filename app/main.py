@@ -16,6 +16,7 @@ import json
 import os
 
 HF_MODEL = os.environ.get('HF_MODEL', 'mesolitica/malaysian-llama2-7b-32k-instructions')
+USE_FLASH_ATTENTION_2 = os.environ.get('USE_FLASH_ATTENTION_2', 'true').lower() == 'true'
 HOTLOAD = os.environ.get('HOTLOAD', 'false').lower() == 'true'
 TORCH_DTYPE = os.environ.get('TORCH_DTYPE', 'bfloat16')
 
@@ -58,7 +59,11 @@ streamer = None
 
 def load_model():
     global model, tokenizer, streamer
-    model = AutoModelForCausalLM.from_pretrained(HF_MODEL, quantization_config=nf4_config)
+    model = AutoModelForCausalLM.from_pretrained(
+        HF_MODEL,
+        use_flash_attention_2=USE_FLASH_ATTENTION_2,
+        quantization_config=nf4_config
+    )
     tokenizer = AutoTokenizer.from_pretrained(HF_MODEL)
     streamer = TextIteratorStreamer(
         tokenizer,
