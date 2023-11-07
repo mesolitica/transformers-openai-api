@@ -15,8 +15,11 @@ import torch
 import json
 import os
 
+logger = logging.getLogger()
+logger.setLevel(os.environ.get('LOGLEVEL', 'INFO').upper())
+
 HF_MODEL = os.environ.get('HF_MODEL', 'mesolitica/malaysian-llama2-7b-32k-instructions')
-USE_FLASH_ATTENTION_2 = os.environ.get('USE_FLASH_ATTENTION_2', 'true').lower() == 'true'
+USE_FLASH_ATTENTION_2 = os.environ.get('USE_FLASH_ATTENTION_2', 'false').lower() == 'true'
 HOTLOAD = os.environ.get('HOTLOAD', 'false').lower() == 'true'
 TORCH_DTYPE = os.environ.get('TORCH_DTYPE', 'bfloat16')
 
@@ -44,13 +47,6 @@ class T:
 
 app = FastAPI()
 
-nf4_config = BitsAndBytesConfig(
-    load_in_4bit=True,
-    bnb_4bit_quant_type='nf4',
-    bnb_4bit_use_double_quant=True,
-    bnb_4bit_compute_dtype=getattr(torch, TORCH_DTYPE)
-)
-
 
 model = None
 tokenizer = None
@@ -59,11 +55,24 @@ streamer = None
 
 def load_model():
     global model, tokenizer, streamer
-    model = AutoModelForCausalLM.from_pretrained(
-        HF_MODEL,
-        use_flash_attention_2=USE_FLASH_ATTENTION_2,
-        quantization_config=nf4_config
-    )
+    if 'AWQ' in HF_MODEL:
+        model = AutoModelForCausalLM.from_pretrained(
+            HF_MODEL,
+            use_flash_attention_2=USE_FLASH_ATTENTION_2,
+            device_map='cuda:0',
+        )
+    else:
+        nf4_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type='nf4',
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_compute_dtype=getattr(torch, TORCH_DTYPE)
+        )
+        model = AutoModelForCausalLM.from_pretrained(
+            HF_MODEL,
+            use_flash_attention_2=USE_FLASH_ATTENTION_2,
+            quantization_config=nf4_config
+        )
     tokenizer = AutoTokenizer.from_pretrained(HF_MODEL)
     streamer = TextIteratorStreamer(
         tokenizer,

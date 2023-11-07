@@ -15,8 +15,10 @@ docker network create chatui-streaming-api
 3. Run Docker-compose,
 
 ```bash
-HF_MODEL=mesolitica/malaysian-llama2-7b-32k-instructions \
+USE_FLASH_ATTENTION_2=true \
+HF_MODEL=mesolitica/malaysian-mistral-7b-32k-instructions-AWQ \
 TORCH_DTYPE=bfloat16 \
+HOTLOAD=true \
 docker-compose up --build
 ```
 
