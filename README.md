@@ -1,6 +1,6 @@
 # chatui-streaming-api
 
-Custom streaming API for https://github.com/huggingface/chat-ui using FastAPI and Vanilla bitsandbytes HuggingFace Transformers, because you just don't care about speed.
+OpenAI compatibility using FastAPI and Vanilla bitsandbytes HuggingFace Transformers, because you just don't care about speed.
 
 ## how-to local API
 
