@@ -76,6 +76,7 @@ def load_model():
             use_flash_attention_2=USE_FLASH_ATTENTION_2,
             quantization_config=nf4_config
         )
+
     tokenizer = AutoTokenizer.from_pretrained(HF_MODEL)
 
 
@@ -162,7 +163,7 @@ async def chat_completions(
     if model is None:
         load_model()
 
-    streamer = TextIteratorStreamer(tokenizer, skip_prompt=True)
+    streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
 
     terminators = [tokenizer.eos_token_id]
     replace_tokens = [tokenizer.eos_token]
@@ -180,7 +181,6 @@ async def chat_completions(
         top_p=form.top_p,
         top_k=form.top_k,
         temperature=form.temperature,
-        eos_token_id=terminators,
         do_sample=True,
         num_beams=1,
         repetition_penalty=1.15,

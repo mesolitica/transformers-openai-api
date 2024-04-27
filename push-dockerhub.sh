@@ -1,2 +1,2 @@
-docker build -t mesoliticadev/chatui-streaming-api .
-docker push mesoliticadev/chatui-streaming-api
+docker build -t mesoliticadev/huggingface-openai-api .
+docker push mesoliticadev/huggingface-openai-api
