@@ -1,7 +1,7 @@
 version: "3.3"
 
 services:
-  chatui-streaming-api:
+  huggingface-openai-api:
     build:
       context: .
     deploy:
@@ -11,14 +11,14 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
-    container_name: chatui-streaming-api
-    networks: ["chatui-streaming-api"]
+    container_name: huggingface-openai-api
     environment:
       - HF_MODEL
       - HOTLOAD
       - TORCH_DTYPE
       - loglevel=DEBUG
       - PYTHONUNBUFFERED=1
+      - HF_HUB_ENABLE_HF_TRANSFER=1
       
     volumes:
       - "./app:/home/ubuntu/app"
@@ -26,7 +26,3 @@ services:
     ports:
       - "7075:7075"
     command: ~/.local/bin/uvicorn app.main:app --host 0.0.0.0 --port 7075 --reload --reload-dir ./app
-
-networks:
-  chatui-streaming-api:
-    external: true

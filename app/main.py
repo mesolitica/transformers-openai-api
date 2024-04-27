@@ -1,19 +1,23 @@
-from typing import Union
 from pydantic import BaseModel
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
-    BitsAndBytesConfig,
-    TextIteratorStreamer
+    BitsAndBytesConfig
 )
+from transformers import TextStreamer, TextIteratorStreamer
+from sse_starlette import EventSourceResponse, ServerSentEvent
+from starlette.requests import ClientDisconnect
 from threading import Thread
-from sse_starlette.sse import EventSourceResponse
+from typing import Union, List, Optional
+import asyncio
+import time
 import logging
 import threading
 import torch
 import json
 import os
+import uuid
 
 logger = logging.getLogger()
 logger.setLevel(os.environ.get('LOGLEVEL', 'INFO').upper())
@@ -28,9 +32,9 @@ if HF_MODEL is None:
 
 headers = {
     'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive'
 }
-
-threadLock = threading.Lock()
 
 
 class T:
@@ -50,11 +54,10 @@ app = FastAPI()
 
 model = None
 tokenizer = None
-streamer = None
 
 
 def load_model():
-    global model, tokenizer, streamer
+    global model, tokenizer
     if 'AWQ' in HF_MODEL:
         model = AutoModelForCausalLM.from_pretrained(
             HF_MODEL,
@@ -74,66 +77,150 @@ def load_model():
             quantization_config=nf4_config
         )
     tokenizer = AutoTokenizer.from_pretrained(HF_MODEL)
-    streamer = TextIteratorStreamer(
-        tokenizer,
-        timeout=10.,
-        skip_prompt=True,
-        skip_special_tokens=True
-    )
 
 
-class InputForm(BaseModel):
-    inputs: str
-    parameters: dict
+class Parameters(BaseModel):
+    model: str = 'model'
+    temperature: float = 0.9
+    top_p: float = 0.95
+    top_k: int = 50
+    max_tokens: int = 256
+    stop: List[str] = []
 
 
-def stream(generate_kwargs):
-    threadLock.acquire()
-    with T(target=model.generate, kwargs=generate_kwargs) as t:
+class ChatMessage(BaseModel):
+    role: Optional[str] = None
+    content: Optional[str] = None
 
-        outputs = []
-        for text in streamer:
-            data = {
-                'token': {
-                    'text': text,
+    def __str__(self) -> str:
+        if self.role == 'system':
+            return f'system:\n{self.content}\n'
+
+        elif self.role == 'user':
+            if self.content is None:
+                return 'user:\n</s>'
+            else:
+                return f'user:\n</s>{self.content}\n'
+
+        elif self.role == 'assistant':
+
+            if self.content is None:
+                return 'assistant'
+
+            else:
+                return f'assistant:\n{self.content}\n'
+
+        else:
+            raise ValueError(f'Unsupported role: {self.role}')
+
+
+class ChatCompletionForm(Parameters):
+    messages: List[ChatMessage]
+    stream: bool = False
+
+
+async def stream(generate_kwargs, replace_tokens, id, created):
+
+    try:
+        with T(target=model.generate, kwargs=generate_kwargs) as t:
+            for text in generate_kwargs['streamer']:
+                for t in replace_tokens:
+                    text = text.replace(t, '')
+
+                data = {
+                    'id': id,
+                    'choices': [
+                        {'delta': {
+                            'content': text,
+                            'function_call': None,
+                            'role': None,
+                            'tool_calls': None
+                        },
+                            'finish_reason': None,
+                            'index': 0,
+                            'logprobs': None
+                        }
+                    ],
+                    'created': created,
+                    'model': 'model',
+                    'object': 'chat.completion.chunk',
+                    'system_fingerprint': None
                 }
-            }
-            yield f'{json.dumps(data)}'
-            outputs.append(text)
+                yield json.dumps(data)
 
-        outputs = ''.join(outputs)
-        data = {
-            'generated_text': outputs
-        }
-        yield f'{json.dumps(data)}'
-    threadLock.release()
+    except asyncio.CancelledError as e:
+
+        yield ServerSentEvent(**{"data": str(e)})
 
 
-@app.post('/chatui')
-async def send_message(input: InputForm):
-    global model, tokenizer, streamer
+@app.post('/chat/completions')
+async def chat_completions(
+    form: ChatCompletionForm,
+    request: Request = None,
+):
 
     if model is None:
         load_model()
 
-    logging.debug(f'input: {input}')
-    inputs = tokenizer([input.inputs], return_tensors='pt', add_special_tokens=False).to('cuda')
+    streamer = TextIteratorStreamer(tokenizer, skip_prompt=True)
+
+    terminators = [tokenizer.eos_token_id]
+    replace_tokens = [tokenizer.eos_token]
+    for s in form.stop:
+        terminators.append(tokenizer.convert_tokens_to_ids(s))
+        replace_tokens.append(s)
+
+    logging.debug(f'input: {form.messages}')
+    prompt = tokenizer.apply_chat_template(form.messages, tokenize=False)
+    inputs = tokenizer([prompt], return_tensors='pt', add_special_tokens=False).to('cuda')
     generate_kwargs = dict(
         inputs,
         streamer=streamer,
-        max_new_tokens=input.parameters.get('max_new_tokens', 1024),
-        top_p=input.parameters.get('top_p', 0.95),
-        top_k=input.parameters.get('top_k', 50),
-        temperature=input.parameters.get('temperature', 0.9),
+        max_new_tokens=form.max_tokens,
+        top_p=form.top_p,
+        top_k=form.top_k,
+        temperature=form.temperature,
+        eos_token_id=terminators,
         do_sample=True,
         num_beams=1,
+        repetition_penalty=1.15,
     )
-    generate_kwargs = {**generate_kwargs, **input.parameters}
-    generate_kwargs.pop('truncate', None)
-    generate_kwargs.pop('return_full_text', None)
-    generate_kwargs.pop('convId', None)
 
-    return EventSourceResponse(stream(generate_kwargs), headers=headers)
+    id = str(uuid.uuid4())
+    created = int(time.time())
+
+    s = stream(generate_kwargs, replace_tokens=replace_tokens, id=id, created=created)
+
+    if form.stream:
+        return EventSourceResponse(s, headers=headers)
+    else:
+        tokens = []
+        async for data in s:
+            data = json.loads(data)
+            tokens.append(data['choices'][0]['delta']['content'])
+
+        data = {
+            'id': id,
+            'choices': [
+                {'finish_reason': 'stop',
+                 'index': 0,
+                 'logprobs': None,
+                 'message': {
+                     'content': ''.join(tokens),
+                     'role': 'assistant',
+                     'function_call': None,
+                     'tool_calls': None
+                 },
+                 'stop_reason': None
+                 }
+            ],
+            'created': created,
+            'model': 'model',
+            'object': 'chat.completion',
+            'system_fingerprint': None,
+            'usage': {'completion_tokens': 0, 'prompt_tokens': 0, 'total_tokens': 0}
+        }
+        return data
 
 
 @app.get('/')

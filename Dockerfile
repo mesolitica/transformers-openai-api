@@ -21,7 +21,9 @@ RUN pip3 install fastapi sse-starlette uvicorn
 RUN sudo apt update
 RUN sudo apt install git -y
 RUN FLASH_ATTENTION_SKIP_CUDA_BUILD=TRUE pip3 install flash-attn --no-build-isolation
-RUN pip3 install https://github.com/casper-hansen/AutoAWQ/releases/download/v0.1.6/autoawq-0.1.6+cu118-cp310-cp310-linux_x86_64.whl --no-deps
+
+RUN pip3 install hf-transfer
+
 ENV PYTHONPATH "${PYTHONPATH}:/home/ubuntu/app"
 COPY ./app/ /home/ubuntu/app
 RUN ls app
