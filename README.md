@@ -1,6 +1,6 @@
 # huggingface-openai-api
 
-OpenAI compatibility using FastAPI and Vanilla bitsandbytes HuggingFace Transformers, because you just don't care about speed.
+OpenAI compatibility using FastAPI HuggingFace Transformers, the models wrapped properly with EventSource so it can serve better concurrency.
 
 ## how-to local API
 
