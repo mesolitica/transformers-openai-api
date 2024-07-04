@@ -22,7 +22,7 @@ BATCH_SIZE = int(os.environ.get('BATCH_SIZE', '1'))
 
 ACCELERATOR_TYPE = os.environ.get('ACCELERATOR_TYPE', 'cuda')
 
-MAX_PROCESS = int(os.environ.get('MAX_PROCESS', '50'))
+MAX_CONCURRENT = int(os.environ.get('MAX_CONCURRENT', '50'))
 
 if HF_MODEL is None:
     raise ValueError('must set `HF_MODEL` in OS environment.')

@@ -97,9 +97,10 @@ async def stream(inputs, id, created, form, request):
                     'system_fingerprint': None
                 }
                 yield json.dumps(data)
+                await asyncio.sleep(0)
 
     except asyncio.CancelledError as e:
-
+        logging.warning(e)
         yield ServerSentEvent(**{"data": str(e)})
 
 

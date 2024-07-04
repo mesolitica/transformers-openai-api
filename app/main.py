@@ -1,4 +1,4 @@
-from env import MAX_PROCESS, ACCELERATOR_TYPE, HEADERS, HOTLOAD
+from env import MAX_CONCURRENT, ACCELERATOR_TYPE, HEADERS, HOTLOAD
 from app.base_model import ChatCompletionForm
 import asyncio
 import logging
@@ -85,7 +85,7 @@ class InsertMiddleware:
 
 app = FastAPI()
 
-app.add_middleware(InsertMiddleware, max_concurrent=MAX_PROCESS)
+app.add_middleware(InsertMiddleware, max_concurrent=MAX_CONCURRENT)
 
 
 @app.post('/chat/completions')
@@ -99,19 +99,6 @@ async def chat_completions_main(
         return EventSourceResponse(r, headers=HEADERS)
     else:
         return r
-
-
-async def numbers(minimum, maximum):
-    for i in range(minimum, maximum + 1):
-        await asyncio.sleep(0.9)
-        yield dict(data=i)
-
-
-@app.get('/')
-async def sse(request: Request):
-    generator = numbers(1, 5)
-    print(generator)
-    return EventSourceResponse(generator)
 
 if HOTLOAD:
     load_model()
