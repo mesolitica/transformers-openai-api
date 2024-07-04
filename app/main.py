@@ -4,6 +4,7 @@ import asyncio
 import logging
 import uuid
 import time
+import torch
 from fastapi import FastAPI, Request
 from sse_starlette import EventSourceResponse
 from transformers.cache_utils import DynamicCache
@@ -45,7 +46,9 @@ class InsertMiddleware:
             except asyncio.CancelledError:
                 logging.warning(f"Cancelling {scope['request']['uuid']} due to disconnect")
             finally:
+
                 if 'cache' in scope:
+
                     for _ in range(len(scope['cache'].key_cache)):
                         del scope['cache'].key_cache[0]
 
@@ -53,6 +56,8 @@ class InsertMiddleware:
                         del scope['cache'].value_cache[0]
 
                     scope.pop('cache', None)
+
+                    torch.cuda.empty_cache()
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
