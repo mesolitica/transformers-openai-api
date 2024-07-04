@@ -1,4 +1,4 @@
-# huggingface-openai-api
+# transformers-openai-api
 
 OpenAI compatibility using FastAPI and Vanilla bitsandbytes HuggingFace Transformers, because you just don't care about speed.
 
