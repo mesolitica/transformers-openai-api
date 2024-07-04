@@ -9,7 +9,15 @@ OpenAI compatibility using FastAPI and Vanilla bitsandbytes HuggingFace Transfor
 2. Run Docker-compose,
 
 ```bash
-USE_FLASH_ATTENTION_2=true \
+ATTN_IMPLEMENTATION=flash_attention_2 \
+HF_MODEL=mesolitica/malaysian-tinyllama-1.1b-16k-instructions-v4 \
+TORCH_DTYPE=bfloat16 \
+HOTLOAD=true \
+docker-compose up --build
+```
+
+```bash
+ATTN_IMPLEMENTATION=flash_attention_2 \
 HF_MODEL=mesolitica/malaysian-mistral-7b-32k-instructions-v4 \
 TORCH_DTYPE=bfloat16 \
 HOTLOAD=true \
@@ -17,7 +25,7 @@ docker-compose up --build
 ```
 
 ```bash
-USE_FLASH_ATTENTION_2=true \
+ATTN_IMPLEMENTATION=flash_attention_2 \
 HF_MODEL=mesolitica/malaysian-llama-3-8b-instruct-16k \
 TORCH_DTYPE=bfloat16 \
 HOTLOAD=true \
@@ -32,14 +40,14 @@ List of OS environment,
 
 **bloat16 required 8.0 compute capability**.
 
-3. Access API at http://localhost:7075, or you can use OpenAI,
+3. Access API at http://localhost:7088, or you can use OpenAI,
 
 ```python
 from openai import OpenAI
 
 client = OpenAI(
     api_key='-',
-    base_url = 'http://localhost:7075'
+    base_url = 'http://localhost:7088'
 )
 
 messages = [
