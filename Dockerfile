@@ -24,8 +24,7 @@ RUN FLASH_ATTENTION_SKIP_CUDA_BUILD=TRUE pip3 install flash-attn --no-build-isol
 
 RUN pip3 install hf-transfer
 
-RUN pip3 install transformers -U
+RUN pip3 install transformers sentencepiece -U
 
 ENV PYTHONPATH "${PYTHONPATH}:/home/ubuntu/app"
 COPY ./app/ /home/ubuntu/app
-RUN ls app

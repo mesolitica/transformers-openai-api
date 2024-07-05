@@ -1,4 +1,4 @@
-from env import MAX_CONCURRENT, ACCELERATOR_TYPE, HEADERS, HOTLOAD
+from env import MAX_CONCURRENT, ACCELERATOR_TYPE, HEADERS, HOTLOAD, CACHE_TYPE
 from app.base_model import ChatCompletionForm
 import asyncio
 import logging
@@ -7,6 +7,7 @@ import time
 import torch
 from fastapi import FastAPI, Request
 from sse_starlette import EventSourceResponse
+from transformers import cache_utils
 from transformers.cache_utils import DynamicCache
 from collections import deque
 
@@ -24,7 +25,9 @@ class InsertMiddleware:
     async def process_request(self, scope, receive, send):
         async with self.semaphore:
 
-            scope['cache'] = DynamicCache()
+            scope['cache'] = getattr(cache_utils, CACHE_TYPE, None)
+            if scope['cache'] is not None:
+                scope['cache'] = scope['cache']()
 
             queue = asyncio.Queue()
 
@@ -47,13 +50,20 @@ class InsertMiddleware:
                 logging.warning(f"Cancelling {scope['request']['uuid']} due to disconnect")
             finally:
 
-                if 'cache' in scope:
+                if 'cache' in scope and scope['cache'] is not None:
 
-                    for _ in range(len(scope['cache'].key_cache)):
-                        del scope['cache'].key_cache[0]
+                    if isinstance(scope['cache'], tuple):
+                        scope['cache'] = list(scope['cache'])
+                        for i in range(len(scope['cache'])):
+                            scope['cache'][i] = list(scope['cache'][i])
+                            for _ in range(len(scope['cache'][i])):
+                                del scope['cache'][i][0]
 
-                    for _ in range(len(scope['cache'].value_cache)):
-                        del scope['cache'].value_cache[0]
+                    else:
+                        for _ in range(len(scope['cache'].key_cache)):
+                            del scope['cache'].key_cache[0]
+                        for _ in range(len(scope['cache'].value_cache)):
+                            del scope['cache'].value_cache[0]
 
                     scope.pop('cache', None)
 

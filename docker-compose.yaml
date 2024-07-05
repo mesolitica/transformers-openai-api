@@ -16,6 +16,12 @@ services:
       - HF_MODEL
       - HOTLOAD
       - TORCH_DTYPE
+      - ARCHITECTURE_TYPE
+      - MODEL_TYPE
+      - TOKENIZER_TYPE
+      - TOKENIZER_USE_FAST
+      - ATTN_IMPLEMENTATION
+      - CACHE_TYPE
       - loglevel=DEBUG
       - PYTHONUNBUFFERED=1
       - HF_HUB_ENABLE_HF_TRANSFER=1

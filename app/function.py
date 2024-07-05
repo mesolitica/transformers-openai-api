@@ -1,8 +1,36 @@
+from env import (
+    MODEL_TYPE,
+    TOKENIZER_TYPE,
+    TOKENIZER_USE_FAST,
+    HF_MODEL,
+    ATTN_IMPLEMENTATION,
+    TORCH_DTYPE,
+)
 import torch
 import logging
 from typing import Optional
+import transformers
 
 SPIECE_UNDERLINE = "▁"
+
+
+def load_hf_model():
+    if 't5' in MODEL_TYPE.lower() and 'sdpa' not in ATTN_IMPLEMENTATION.lower():
+        logging.warning(
+            'you are using T5 without SDPA, might want to use this fork https://github.com/mesolitica/t5-sdpa')
+
+    return getattr(transformers, MODEL_TYPE).from_pretrained(
+        HF_MODEL,
+        attn_implementation=ATTN_IMPLEMENTATION,
+        torch_dtype=getattr(torch, TORCH_DTYPE),
+    )
+
+
+def load_hf_tokenizer():
+    return getattr(transformers, TOKENIZER_TYPE).from_pretrained(
+        HF_MODEL,
+        use_fast=TOKENIZER_USE_FAST
+    )
 
 
 def decode(tokenizer, ids):
