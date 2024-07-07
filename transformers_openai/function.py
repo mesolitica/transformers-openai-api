@@ -1,13 +1,7 @@
-from env import (
-    MODEL_TYPE,
-    TOKENIZER_TYPE,
-    TOKENIZER_USE_FAST,
-    HF_MODEL,
-    ATTN_IMPLEMENTATION,
-    TORCH_DTYPE,
-)
+from transformers_openai.env import args
 import torch
 import logging
+import importlib
 from typing import Optional
 import transformers
 
@@ -15,21 +9,30 @@ SPIECE_UNDERLINE = "▁"
 
 
 def load_hf_model():
-    if 't5' in MODEL_TYPE.lower() and 'sdpa' not in ATTN_IMPLEMENTATION.lower():
+    if 't5' in args.model_type.lower() and 'sdpa' not in args.attn_implementation.lower():
         logging.warning(
             'you are using T5 without SDPA, might want to use this fork https://github.com/mesolitica/t5-sdpa')
 
-    return getattr(transformers, MODEL_TYPE).from_pretrained(
-        HF_MODEL,
-        attn_implementation=ATTN_IMPLEMENTATION,
-        torch_dtype=getattr(torch, TORCH_DTYPE),
-    )
+    logging.info(f'loading model {args.hf_model}')
+
+    if '.' in args.model_type:
+        module_name, class_name = args.model_type.split('.')
+        module = importlib.import_module(module_name)
+        class_ = getattr(module, class_name)
+        return class_.from_quantized(args.hf_model)
+
+    else:
+        return getattr(transformers, args.model_type).from_pretrained(
+            args.hf_model,
+            attn_implementation=args.attn_implementation,
+            torch_dtype=getattr(torch, args.torch_dtype),
+        ).cuda()
 
 
 def load_hf_tokenizer():
-    return getattr(transformers, TOKENIZER_TYPE).from_pretrained(
-        HF_MODEL,
-        use_fast=TOKENIZER_USE_FAST
+    return getattr(transformers, args.tokenizer_type).from_pretrained(
+        args.hf_model,
+        use_fast=args.tokenizer_use_fast,
     )
 
 

@@ -9,13 +9,82 @@ OpenAI compatibility using FastAPI HuggingFace Transformers, the models wrapped 
 5. Properly cleanup KV Cache after each requests.
 6. Support Encoder-Decoder like T5.
 
-## how-to local API
+## how to install
 
-1. Make sure you already installed Docker and Docker Compose that has Nvidia GPU access, https://docs.docker.com/config/containers/resource_constraints/#gpu
+Using PIP with git,
 
-2. Run Docker-compose,
+```bash
+pip3 install git+https://github.com/mesolitica/transformers-openai-api
+```
+
+Or you can git clone,
+
+```bash
+git clone https://github.com/mesolitica/transformers-openai-api && cd transformers-openai-api
+```
+
+## how to local
+
+For docker, Make sure you already installed Docker and Docker Compose that has Nvidia GPU access, https://docs.docker.com/config/containers/resource_constraints/#gpu
+
+### Supported parameters
+
+```bash
+python3 -m transformers_openai.main --help
+```
+
+```
+usage: main.py [-h] [--host HOST] [--port PORT] [--loglevel LOGLEVEL] [--model-type MODEL_TYPE] [--tokenizer-type TOKENIZER_TYPE]
+               [--tokenizer-use-fast TOKENIZER_USE_FAST] [--hf-model HF_MODEL] [--hotload HOTLOAD]
+               [--attn-implementation ATTN_IMPLEMENTATION] [--torch-dtype TORCH_DTYPE]
+               [--architecture-type {decoder,encoder-decoder}] [--cache-type CACHE_TYPE] [--n-positions N_POSITIONS]
+               [--batch-size BATCH_SIZE] [--accelerator-type ACCELERATOR_TYPE] [--max-concurrent MAX_CONCURRENT]
+
+Configuration parser
+
+options:
+  -h, --help            show this help message and exit
+  --host HOST           host name to host the app (default: 0.0.0.0, env: HOSTNAME)
+  --port PORT           port to host the app (default: 7088, env: PORT)
+  --loglevel LOGLEVEL   Logging level (default: INFO, env: LOGLEVEL)
+  --model-type MODEL_TYPE
+                        Model type (default: AutoModelForCausalLM, env: MODEL_TYPE)
+  --tokenizer-type TOKENIZER_TYPE
+                        Tokenizer type (default: AutoTokenizer, env: TOKENIZER_TYPE)
+  --tokenizer-use-fast TOKENIZER_USE_FAST
+                        Use fast tokenizer (default: True, env: TOKENIZER_USE_FAST)
+  --hf-model HF_MODEL   Hugging Face model (default: mesolitica/malaysian-llama2-7b-32k-instructions, env: HF_MODEL)
+  --hotload HOTLOAD     Enable hot loading (default: True, env: HOTLOAD)
+  --attn-implementation ATTN_IMPLEMENTATION
+                        Attention implementation (default: sdpa, env: ATTN_IMPLEMENTATION)
+  --torch-dtype TORCH_DTYPE
+                        Torch data type (default: bfloat16, env: TORCH_DTYPE)
+  --architecture-type {decoder,encoder-decoder}
+                        Architecture type (default: decoder, env: ARCHITECTURE_TYPE)
+  --cache-type CACHE_TYPE
+                        Cache type (default: DynamicCache, env: CACHE_TYPE)
+  --n-positions N_POSITIONS
+                        Number of positions (default: 2048, env: N_POSITIONS)
+  --batch-size BATCH_SIZE
+                        Batch size (default: 1, env: BATCH_SIZE)
+  --accelerator-type ACCELERATOR_TYPE
+                        Accelerator type (default: cuda, env: ACCELERATOR_TYPE)
+  --max-concurrent MAX_CONCURRENT
+                        Maximum concurrent requests (default: 100, env: MAX_CONCURRENT)
+```
+
+**We support both args and OS environment**.
 
 ### Run Decoder
+
+#### Using CLI
+
+```bash
+python3 -m transformers_openai.main \
+--host 0.0.0.0 --port 7088 --hf-model mesolitica/malaysian-tinyllama-1.1b-16k-instructions-v4
+```
+
+#### Using Docker
 
 ```bash
 ATTN_IMPLEMENTATION=flash_attention_2 \
@@ -30,33 +99,7 @@ HOTLOAD=true \
 docker-compose up --build
 ```
 
-```bash
-ATTN_IMPLEMENTATION=flash_attention_2 \
-HF_MODEL=mesolitica/malaysian-mistral-7b-32k-instructions-v4 \
-MODEL_TYPE=AutoModelForCausalLM \
-TOKENIZER_TYPE=AutoTokenizer \
-TOKENIZER_USE_FAST=true \
-ARCHITECTURE_TYPE=decoder \
-CACHE_TYPE=DynamicCache \
-TORCH_DTYPE=bfloat16 \
-HOTLOAD=true \
-docker-compose up --build
-```
-
-```bash
-ATTN_IMPLEMENTATION=flash_attention_2 \
-HF_MODEL=mesolitica/malaysian-llama-3-8b-instruct-16k \
-MODEL_TYPE=AutoModelForCausalLM \
-TOKENIZER_TYPE=AutoTokenizer \
-TOKENIZER_USE_FAST=true \
-ARCHITECTURE_TYPE=decoder \
-CACHE_TYPE=DynamicCache \
-TORCH_DTYPE=bfloat16 \
-HOTLOAD=true \
-docker-compose up --build
-```
-
-After that you can test using OpenAI library,
+#### Example OpenAI library
 
 ```python
 from openai import OpenAI
@@ -85,11 +128,28 @@ Output,
 ChatCompletion(id='c8695dd2-5ab8-4064-9bd5-c5d666324aa3', choices=[Choice(finish_reason='stop', index=0, logprobs=None, message=ChatCompletionMessage(content='helo! Bagaimana saya boleh membantu anda hari ini?', role='assistant', function_call=None, tool_calls=None), stop_reason=None)], created=1714235932, model='model', object='chat.completion', system_fingerprint=None, usage=CompletionUsage(completion_tokens=0, prompt_tokens=0, total_tokens=0))
 ```
 
-#### Streaming
+Recorded streaming,
 
 https://github.com/mesolitica/transformers-openai-api/assets/19810909/5a8c873b-2a80-4c87-92d8-f50a64bc5adf
 
 ### Run Encoder-Decoder
+
+#### Using CLI
+
+```bash
+python3 -m transformers_openai.main \
+--host 0.0.0.0 --port 7088 \
+--attn-implementation eager \
+--model-type T5ForConditionalGeneration \
+--tokenizer-type AutoTokenizer \
+--tokenizer-use-fast false \
+--architecture-type encoder-decoder \
+--torch-dtype bfloat16 \
+--cache-type none \
+--hf-model google/flan-t5-base
+```
+
+#### Using Docker
 
 ```bash
 ATTN_IMPLEMENTATION=eager \
@@ -104,7 +164,7 @@ HOTLOAD=true \
 docker-compose up --build
 ```
 
-After that you can test using OpenAI library,
+#### Example OpenAI library
 
 ```python
 from openai import OpenAI
@@ -133,11 +193,11 @@ Output,
 ChatCompletion(id='026bb93b-095f-4bfb-8540-b9b26ce41259', choices=[Choice(finish_reason='stop', index=0, logprobs=None, message=ChatCompletionMessage(content=' Geoffrey Hinton was born in Virginia in 1862. George Washington was born in 1859. The final answer: yes.', role='assistant', function_call=None, tool_calls=None), stop_reason=None)], created=1720149843, model='model', object='chat.completion', system_fingerprint=None, usage=CompletionUsage(completion_tokens=27, prompt_tokens=24, total_tokens=51))
 ```
 
-#### Streaming
+Recorded streaming,
 
 https://github.com/mesolitica/transformers-openai-api/assets/19810909/0ec43628-30da-4d99-b483-a5d166bc335c
 
-Output,
+Output streaming,
 
 ```
 data: {"id": "20e9d233-6f6c-4dc4-95a9-7dcf077e9b57", "choices": [{"delta": {"content": " George", "function_call": null, "role": null, "tool_calls": null}, "finish_reason": null, "index": 0, "logprobs": null}], "created": 1720157833, "model": "model", "object": "chat.completion.chunk", "system_fingerprint": null}
@@ -195,34 +255,6 @@ data: {"id": "20e9d233-6f6c-4dc4-95a9-7dcf077e9b57", "choices": [{"delta": {"con
 data: {"id": "20e9d233-6f6c-4dc4-95a9-7dcf077e9b57", "choices": [{"delta": {"content": ".", "function_call": null, "role": null, "tool_calls": null}, "finish_reason": null, "index": 0, "logprobs": null}], "created": 1720157833, "model": "model", "object": "chat.completion.chunk", "system_fingerprint": null}
 ```
 
-## OS Environment
-
-```python
-LOGLEVEL = os.environ.get('LOGLEVEL', 'INFO').upper()
-
-MODEL_TYPE = os.environ.get('MODEL_TYPE', 'AutoModelForCausalLM')
-
-TOKENIZER_TYPE = os.environ.get('TOKENIZER_TYPE', 'AutoTokenizer')
-TOKENIZER_USE_FAST = os.environ.get('TOKENIZER_USE_FAST', 'true').lower() == 'true'
-
-HF_MODEL = os.environ.get('HF_MODEL', 'mesolitica/malaysian-llama2-7b-32k-instructions')
-HOTLOAD = os.environ.get('HOTLOAD', 'false').lower() == 'true'
-
-ATTN_IMPLEMENTATION = os.environ.get('ATTN_IMPLEMENTATION', 'sdpa').lower()
-TORCH_DTYPE = os.environ.get('TORCH_DTYPE', 'bfloat16')
-
-ARCHITECTURE_TYPE = os.environ.get('ARCHITECTURE_TYPE', 'decoder')
-
-CACHE_TYPE = os.environ.get('CACHE_TYPE', 'DynamicCache')
-
-N_POSITIONS = int(os.environ.get('N_POSITIONS', '2048'))
-BATCH_SIZE = int(os.environ.get('BATCH_SIZE', '1'))
-
-ACCELERATOR_TYPE = os.environ.get('ACCELERATOR_TYPE', 'cuda')
-
-MAX_CONCURRENT = int(os.environ.get('MAX_CONCURRENT', '50'))
-```
-
 ## How to simulate disconnected?
 
 Simple,
@@ -233,7 +265,7 @@ import asyncio
 import json
 import time
 
-url = 'http://100.93.25.29:7088/chat/completions'
+url = 'http://localhost:7088/chat/completions'
 headers = {
     'accept': 'application/json',
     'Content-Type': 'application/json'
@@ -262,7 +294,7 @@ async with aiohttp.ClientSession() as session:
     async with session.post(url, headers=headers, json=payload) as response:
         async for line in response.content:
             
-            if count > 5:
+            if count > 3:
                 break
                 
             count += 1
@@ -271,17 +303,16 @@ async with aiohttp.ClientSession() as session:
 You should see warning logs,
 
 ```
-transformers-openai-api    | WARNING:root:Cancelled by cancel scope 7f686d03b010
-transformers-openai-api    | WARNING:root:Cancelling f1bc7ca5-f4a0-4f4d-acd2-d6c6bbdee98c due to disconnect
-transformers-openai-api    | INFO:     100.93.25.29:49762 - "POST /chat/completions HTTP/1.1" 200 OK
-transformers-openai-api    | WARNING:root:Cancelled by cancel scope 7f686cf93970
-transformers-openai-api    | WARNING:root:Cancelling 8537d90d-65c0-410e-acf0-7176accf8f37 due to disconnect
+INFO:root:Received request ae6af2a2-c1a3-4e5f-a9cf-eb1cf645870e in queue 1.9073486328125e-06
+INFO:     127.0.0.1:60416 - "POST /chat/completions HTTP/1.1" 200 OK
+WARNING:root:
+WARNING:root:Cancelling ae6af2a2-c1a3-4e5f-a9cf-eb1cf645870e due to disconnect
 ```
 
 ## [Stress test](stress-test)
 
-### [T5](stress-test/t5.py)
+### [FlanT5 Base](stress-test/t5.py)
 
-Rate of 5 users per second, total requests up to 50 users for 30 seconds on shared RTX 3090 Ti FlanT5 Base,
+Rate of 5 users per second, total requests up to 50 users for 30 seconds on shared RTX 3090 Ti,
 
 ![alt text](stress-test/graph-t5.png)

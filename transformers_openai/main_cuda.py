@@ -1,6 +1,11 @@
-from app.env import ARCHITECTURE_TYPE
-from app.function import sample, decode, load_hf_tokenizer, load_hf_model
-from app.base_model import ChatCompletionForm
+from transformers_openai.env import args
+from transformers_openai.function import (
+    sample,
+    decode,
+    load_hf_tokenizer,
+    load_hf_model
+)
+from transformers_openai.base_model import ChatCompletionForm
 from fastapi import Request
 from sse_starlette import ServerSentEvent
 
@@ -17,7 +22,7 @@ tokenizer = None
 
 def load_model():
     global model, tokenizer
-    model = load_hf_model().cuda()
+    model = load_hf_model()
     tokenizer = load_hf_tokenizer()
 
 
@@ -32,12 +37,15 @@ async def stream(inputs, id, created, form, request):
         replace_tokens.append(s)
 
     cache = request.scope['cache']
+    cache_is_none = cache is None
 
-    mask_penalty = torch.ones((1, model.config.vocab_size)).cuda()
+    mask_penalty = torch.ones((len(inputs), model.config.vocab_size)).cuda()
+
+    before = time.time()
 
     with torch.no_grad():
 
-        if ARCHITECTURE_TYPE == 'encoder-decoder':
+        if args.architecture_type == 'encoder-decoder':
             out_encoder = model.encoder(inputs, return_dict=False)
             out_encoder = out_encoder
             inputs = torch.tensor([[model.config.decoder_start_token_id]], device='cuda')
@@ -46,7 +54,7 @@ async def stream(inputs, id, created, form, request):
 
             for k in range(form.max_tokens):
 
-                if ARCHITECTURE_TYPE == 'encoder-decoder':
+                if args.architecture_type == 'encoder-decoder':
                     out = model(
                         decoder_input_ids=inputs,
                         encoder_outputs=out_encoder,
@@ -54,17 +62,19 @@ async def stream(inputs, id, created, form, request):
                         use_cache=True,
                         return_dict=False
                     )
-                    logits = out[0]
-                    cache = out[1]
-                    request.scope['cache'] = cache
 
                 else:
-                    logits = model(
+                    out = model(
                         inputs,
                         past_key_values=cache,
                         use_cache=True,
                         return_dict=False
-                    )[0]
+                    )
+
+                logits = out[0]
+                if cache_is_none:
+                    cache = out[1]
+                    request.scope['cache'] = cache
 
                 idx_next, probs = sample(
                     logits,
@@ -75,6 +85,9 @@ async def stream(inputs, id, created, form, request):
 
                 mask_penalty[0, idx_next[0]] = form.repetition_penalty
                 token = decode(tokenizer, idx_next)
+
+                if k == 0:
+                    request.scope['request']['time_first_token'] = time.time()
 
                 for t in replace_tokens:
                     token = token.replace(t, '')
@@ -112,8 +125,11 @@ async def stream(inputs, id, created, form, request):
                 yield json.dumps(data)
                 await asyncio.sleep(0)
 
+            request.scope['request']['time_max_tokens'] = time.time()
+            request.scope['request']['total_tokens'] = k
+
         except asyncio.CancelledError as e:
-            logging.warning(e)
+            logging.warning(f"model step cancelled {request.scope['request']['uuid']}")
             yield ServerSentEvent(**{"data": str(e)})
 
 
@@ -134,6 +150,8 @@ async def chat_completions(
         return_tensors='pt',
         add_special_tokens=False,
     ).to('cuda')
+
+    # inputs = torch.concat([inputs] * 3)
 
     id = request.scope['request']['uuid']
     created = int(time.time())

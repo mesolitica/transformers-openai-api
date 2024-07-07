@@ -27,8 +27,8 @@ services:
       - HF_HUB_ENABLE_HF_TRANSFER=1
       
     volumes:
-      - "./app:/home/ubuntu/app"
+      - "./transformers_openai:/home/ubuntu/transformers_openai"
       - "./huggingface:/home/ubuntu/.cache/huggingface"
     ports:
       - "7088:7088"
-    command: ~/.local/bin/uvicorn app.main:app --host 0.0.0.0 --port 7088 --reload --reload-dir ./app
+    command: python3 -m transformers_openai.main --host 0.0.0.0 --port 7088 --reload true

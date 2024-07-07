@@ -1,6 +1,12 @@
 accelerate
 bitsandbytes
-transformers
+transformers>=4.42
 tokenizers
 evaluate
 scipy
+sse_starlette
+fastapi
+sse-starlette
+uvicorn
+hf-transfer
+sentencepiece

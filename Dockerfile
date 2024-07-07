@@ -13,18 +13,12 @@ RUN sudo apt install openssh-server sshpass openssh-client -y
 
 RUN sudo apt install ninja-build -y
 RUN pip3 install torch --index-url https://download.pytorch.org/whl/cu118
-ADD requirements.txt .
-RUN pip3 install -r requirements.txt
-
-RUN mkdir app
-RUN pip3 install fastapi sse-starlette uvicorn
+RUN pip3 install pip -U
+RUN pip3 install packaging
 RUN sudo apt update
 RUN sudo apt install git -y
 RUN FLASH_ATTENTION_SKIP_CUDA_BUILD=TRUE pip3 install flash-attn --no-build-isolation
+ADD requirements.txt .
+RUN pip3 install -r requirements.txt
 
-RUN pip3 install hf-transfer
-
-RUN pip3 install transformers sentencepiece -U
-
-ENV PYTHONPATH "${PYTHONPATH}:/home/ubuntu/app"
-COPY ./app/ /home/ubuntu/app
+COPY ./transformers_openai/ /home/ubuntu/transformers_openai

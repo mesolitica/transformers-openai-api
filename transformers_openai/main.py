@@ -1,18 +1,24 @@
-from env import MAX_CONCURRENT, ACCELERATOR_TYPE, HEADERS, HOTLOAD, CACHE_TYPE
-from app.base_model import ChatCompletionForm
+from transformers_openai.env import args
+from transformers_openai.base_model import ChatCompletionForm
 import asyncio
 import logging
 import uuid
 import time
 import torch
+import uvicorn
 from fastapi import FastAPI, Request
 from sse_starlette import EventSourceResponse
 from transformers import cache_utils
-from transformers.cache_utils import DynamicCache
 from collections import deque
 
-if ACCELERATOR_TYPE == 'cuda':
-    from app.main_cuda import chat_completions, load_model
+if args.accelerator_type == 'cuda':
+    from transformers_openai.main_cuda import chat_completions, load_model
+
+HEADERS = {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive'
+}
 
 
 class InsertMiddleware:
@@ -25,7 +31,10 @@ class InsertMiddleware:
     async def process_request(self, scope, receive, send):
         async with self.semaphore:
 
-            scope['cache'] = getattr(cache_utils, CACHE_TYPE, None)
+            log = f"Received request {scope['request']['uuid']} in queue {scope['request']['time_in_queue']} seconds"
+            logging.info(log)
+
+            scope['cache'] = getattr(cache_utils, args.cache_type, None)
             if scope['cache'] is not None:
                 scope['cache'] = scope['cache']()
 
@@ -45,7 +54,14 @@ class InsertMiddleware:
             asyncio.create_task(message_poller(sentinel, handler_task))
 
             try:
-                return await handler_task
+                await handler_task
+                time_taken_first_token = scope['request']['time_first_token'] - \
+                    scope['request']['after_queue']
+                time_taken_max_tokens = scope['request']['time_max_tokens'] - \
+                    scope['request']['time_first_token']
+                tps = scope['request']['total_tokens'] / time_taken_max_tokens
+                logging.info(
+                    f"Complete {scope['request']['uuid']}, time first token {time_taken_first_token} seconds, time taken {time_taken_max_tokens} seconds, TPS {tps}")
             except asyncio.CancelledError:
                 logging.warning(f"Cancelling {scope['request']['uuid']} due to disconnect")
             finally:
@@ -88,8 +104,6 @@ class InsertMiddleware:
         scope['request']['after_queue'] = time.time()
         scope['request']['time_in_queue'] = scope['request']['after_queue'] - \
             scope['request']['before_queue']
-        logging.debug(
-            f"{scope['request']['uuid']} stay in queue for {scope['request']['time_in_queue']} seconds")
 
         await self.process_request(scope, receive, send)
 
@@ -100,7 +114,7 @@ class InsertMiddleware:
 
 app = FastAPI()
 
-app.add_middleware(InsertMiddleware, max_concurrent=MAX_CONCURRENT)
+app.add_middleware(InsertMiddleware, max_concurrent=args.max_concurrent)
 
 
 @app.post('/chat/completions')
@@ -115,5 +129,14 @@ async def chat_completions_main(
     else:
         return r
 
-if HOTLOAD:
+if args.hotload:
     load_model()
+
+if __name__ == "__main__":
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=args.port,
+        log_level=args.loglevel.lower(),
+        access_log=True,
+    )
