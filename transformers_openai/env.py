@@ -64,16 +64,26 @@ def parse_arguments():
         '--architecture-type',
         default=os.environ.get(
             'ARCHITECTURE_TYPE',
-            'decoder'),
-        choices=[
-            'decoder',
-            'encoder-decoder'],
+            'decoder'
+        ),
+        choices=['decoder', 'encoder-decoder'],
         help='Architecture type (default: %(default)s, env: ARCHITECTURE_TYPE)'
     )
     parser.add_argument(
-        '--cache-type', default=os.environ.get('CACHE_TYPE', 'DynamicCache'),
+        '--cache-type', default=os.environ.get('CACHE_TYPE', 'none'),
         help='Cache type (default: %(default)s, env: CACHE_TYPE)'
     )
+    parser.add_argument(
+        '--continous-batching', type=lambda x: x.lower() == 'true',
+        default=os.environ.get('CONTINOUS_BATCHING', 'false').lower() == 'true',
+        help='Enable continous batching (default: %(default)s, env: CONTINOUS_BATCHING)'
+    )
+    parser.add_argument(
+        '--continous-batching-microsleep', type=float,
+        default=float(os.environ.get('CONTINOUS_BATCHING_MICROSLEEP', '5e-4')),
+        help='microsleep to group continous batching (default: %(default)s, env: CONTINOUS_BATCHING_MICROSLEEP)'
+    )
+
     parser.add_argument(
         '--n-positions',
         type=int,

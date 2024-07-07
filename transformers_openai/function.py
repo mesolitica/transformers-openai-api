@@ -19,7 +19,10 @@ def load_hf_model():
         module_name, class_name = args.model_type.split('.')
         module = importlib.import_module(module_name)
         class_ = getattr(module, class_name)
-        return class_.from_quantized(args.hf_model)
+        if module_name == 'auto_gptq':
+            return class_.from_quantized(args.hf_model)
+        else:
+            return class_.from_pretrained(args.hf_model)
 
     else:
         return getattr(transformers, args.model_type).from_pretrained(
@@ -30,10 +33,14 @@ def load_hf_model():
 
 
 def load_hf_tokenizer():
-    return getattr(transformers, args.tokenizer_type).from_pretrained(
+    tokenizer = getattr(transformers, args.tokenizer_type).from_pretrained(
         args.hf_model,
         use_fast=args.tokenizer_use_fast,
     )
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token_id = 0
+    tokenizer.padding_side = 'left'
+    return tokenizer
 
 
 def decode(tokenizer, ids):
@@ -59,7 +66,8 @@ def logits_to_probs(
 ):
 
     logits = logits / mask_penalty
-    logits = logits / max(temperature, 1e-5)
+    if temperature > 0:
+        logits = logits / max(temperature, 1e-5)
 
     if top_k is not None:
         v, _ = torch.topk(logits, min(top_k, logits.size(-1)))

@@ -12,7 +12,12 @@ from transformers import cache_utils
 from collections import deque
 
 if args.accelerator_type == 'cuda':
-    from transformers_openai.main_cuda import chat_completions, load_model
+    from transformers_openai.main_cuda import (
+        chat_completions,
+        load_model,
+        prefill,
+        step,
+    )
 
 HEADERS = {
     'Content-Type': 'text/event-stream',
@@ -68,7 +73,7 @@ class InsertMiddleware:
 
                 if 'cache' in scope and scope['cache'] is not None:
 
-                    if isinstance(scope['cache'], tuple):
+                    if isinstance(scope['cache'], tuple) or isinstance(scope['cache'], list):
                         scope['cache'] = list(scope['cache'])
                         for i in range(len(scope['cache'])):
                             scope['cache'][i] = list(scope['cache'][i])
@@ -128,6 +133,25 @@ async def chat_completions_main(
         return EventSourceResponse(r, headers=HEADERS)
     else:
         return r
+
+if args.continous_batching:
+    @app.on_event("startup")
+    async def startup_event():
+        app.state.background_prefill = asyncio.create_task(prefill())
+        app.state.background_step = asyncio.create_task(step())
+
+    @app.on_event("shutdown")
+    async def shutdown_event():
+        app.state.background_prefill.cancel()
+        app.state.background_step.cancel()
+        try:
+            await app.state.background_prefill
+        except asyncio.CancelledError:
+            pass
+        try:
+            await app.state.background_step
+        except asyncio.CancelledError:
+            pass
 
 if args.hotload:
     load_model()

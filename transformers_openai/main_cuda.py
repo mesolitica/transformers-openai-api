@@ -9,6 +9,8 @@ from transformers_openai.base_model import ChatCompletionForm
 from fastapi import Request
 from sse_starlette import ServerSentEvent
 
+from datetime import datetime
+import threading
 import asyncio
 import time
 import logging
@@ -18,6 +20,130 @@ import json
 
 model = None
 tokenizer = None
+
+prefill_queue = asyncio.Queue()
+step_queue = asyncio.Queue()
+processing = False
+
+
+async def prefill():
+    while True:
+        await asyncio.sleep(args.continous_batching_microsleep)
+
+        batch = []
+        while not prefill_queue.empty():
+            try:
+                request = await asyncio.wait_for(prefill_queue.get(), timeout=1e-4)
+                batch.append(request)
+            except asyncio.TimeoutError:
+                break
+
+        if not len(batch):
+            continue
+
+        logging.info(f'{str(datetime.now())} prefill batch size of {len(batch)}')
+
+        futures = [batch[i][0] for i in range(len(batch))]
+        inputs = [batch[i][1] for i in range(len(batch))]
+        lengths = [batch[i][3] for i in range(len(batch))]
+
+        max_len = max(lengths)
+
+        inputs = [{'input_ids': inputs[i][0]} for i in range(len(inputs))]
+        input_ids = tokenizer.pad(inputs, padding=True, return_tensors='pt').to('cuda')
+
+        before = time.time()
+        out = model(
+            **input_ids,
+            past_key_values=None,
+            use_cache=True,
+            return_dict=False
+        )
+
+        out_logits = out[0]
+        out_caches = out[1]
+        caches = []
+        for i in range(len(batch)):
+            cache = []
+            for k in range(len(out_caches)):
+                cache_ = []
+                for j in range(len(out_caches[k])):
+                    cache_.append(out_caches[k][j][i:i + 1])
+                cache.append(cache_)
+            caches.append(cache)
+
+        for i in range(len(futures)):
+            futures[i].set_result((out_logits[i: i + 1, -1:], caches[i]))
+
+
+async def step():
+    while True:
+        await asyncio.sleep(args.continous_batching_microsleep)
+
+        batch = []
+        while not step_queue.empty():
+            try:
+                request = await asyncio.wait_for(step_queue.get(), timeout=1e-4)
+                batch.append(request)
+            except asyncio.TimeoutError:
+                break
+
+        if not len(batch):
+            continue
+
+        logging.info(f'{str(datetime.now())} step batch size of {len(batch)}')
+
+        futures = [batch[i][0] for i in range(len(batch))]
+        inputs = [batch[i][1] for i in range(len(batch))]
+        caches = [batch[i][2] for i in range(len(batch))]
+        lengths = [batch[i][3] for i in range(len(batch))]
+
+        max_len = max(lengths)
+
+        cache_shape = caches[0][0][0].shape
+        cache_dtype = caches[0][0][0].dtype
+        cache_device = caches[0][0][0].device
+
+        temp_caches = []
+        for n in range(model.config.num_hidden_layers):
+            cache = []
+            for k in range(2):
+                c = torch.zeros(
+                    len(batch),
+                    cache_shape[1],
+                    max_len,
+                    cache_shape[3],
+                    dtype=cache_dtype,
+                    device=cache_device
+                )
+                for i in range(len(batch)):
+                    c[i, :, :caches[i][n][k].shape[2], :] = caches[i][n][k]
+                cache.append(c)
+            temp_caches.append(cache)
+
+        inputs = torch.concat(inputs, dim=0)
+
+        before = time.time()
+        out = model(
+            inputs,
+            past_key_values=temp_caches,
+            use_cache=True,
+            return_dict=False
+        )
+        out_logits = out[0]
+        out_caches = out[1]
+        caches = []
+        for i in range(len(batch)):
+            cache = []
+            for k in range(len(out_caches)):
+                cache_ = []
+                for j in range(len(out_caches[k])):
+                    cache_.append(out_caches[k][j][i:i + 1])
+                cache.append(cache_)
+            caches.append(cache)
+
+        for i in range(len(futures)):
+            futures[i].set_result((out_logits[i: i + 1, -1:], caches[i]))
 
 
 def load_model():
@@ -43,6 +169,8 @@ async def stream(inputs, id, created, form, request):
 
     before = time.time()
 
+    initial_length = inputs.shape[1]
+
     with torch.no_grad():
 
         if args.architecture_type == 'encoder-decoder':
@@ -64,12 +192,22 @@ async def stream(inputs, id, created, form, request):
                     )
 
                 else:
-                    out = model(
-                        inputs,
-                        past_key_values=cache,
-                        use_cache=True,
-                        return_dict=False
-                    )
+                    if args.continous_batching:
+                        if k == 0:
+                            q = prefill_queue
+                        else:
+                            q = step_queue
+
+                        future = asyncio.Future()
+                        await q.put((future, inputs, cache, initial_length + k))
+                        out = await future
+                    else:
+                        out = model(
+                            inputs,
+                            past_key_values=cache,
+                            use_cache=True,
+                            return_dict=False
+                        )
 
                 logits = out[0]
                 if cache_is_none:
@@ -150,8 +288,6 @@ async def chat_completions(
         return_tensors='pt',
         add_special_tokens=False,
     ).to('cuda')
-
-    # inputs = torch.concat([inputs] * 3)
 
     id = request.scope['request']['uuid']
     created = int(time.time())
