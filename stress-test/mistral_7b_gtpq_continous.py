@@ -9,10 +9,14 @@ gpu_stats = gpustat.GPUStatCollection.new_query()
 """
 Make sure already running this,
 
-HF_TRANSFER=1 python3.10 -m transformers_openai.main \
+HF_TRANSFER=1 \
+python3 -m transformers_openai.main \
 --host 0.0.0.0 --port 7088 \
---hf-model mistralai/Mistral-7B-Instruct-v0.2 \
---torch-dtype float16
+--hf-model TheBloke/Mistral-7B-Instruct-v0.2-GPTQ \
+--torch-dtype float16 \
+--hotload true \
+--model-type auto_gptq.AutoGPTQForCausalLM \
+--continous-batching true
 """
 
 questions = [
@@ -90,9 +94,10 @@ class HelloWorldUser(HttpUser):
             'messages': [
                 {
                     'role': 'user',
-                    'content': f'Q: {next(questions)}</s>',
+                    'content': next(questions),
                 },
             ],
             'stream': False,
         }
         r = self.client.post('/chat/completions', json=json_data)
+        print(r.json())

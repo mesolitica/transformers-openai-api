@@ -60,31 +60,35 @@ class InsertMiddleware:
 
             try:
                 await handler_task
-                time_taken_first_token = scope['request']['time_first_token'] - \
-                    scope['request']['after_queue']
-                time_taken_max_tokens = scope['request']['time_max_tokens'] - \
-                    scope['request']['time_first_token']
-                tps = scope['request']['total_tokens'] / time_taken_max_tokens
-                logging.info(
-                    f"Complete {scope['request']['uuid']}, time first token {time_taken_first_token} seconds, time taken {time_taken_max_tokens} seconds, TPS {tps}")
+                if 'time_max_tokens' in scope['request']:
+                    time_taken_first_token = scope['request']['time_first_token'] - \
+                        scope['request']['after_queue']
+                    time_taken_max_tokens = scope['request']['time_max_tokens'] - \
+                        scope['request']['time_first_token']
+                    tps = scope['request']['total_tokens'] / time_taken_max_tokens
+                    logging.info(
+                        f"Complete {scope['request']['uuid']}, time first token {time_taken_first_token} seconds, time taken {time_taken_max_tokens} seconds, TPS {tps}")
             except asyncio.CancelledError:
                 logging.warning(f"Cancelling {scope['request']['uuid']} due to disconnect")
             finally:
 
                 if 'cache' in scope and scope['cache'] is not None:
 
-                    if isinstance(scope['cache'], tuple) or isinstance(scope['cache'], list):
-                        scope['cache'] = list(scope['cache'])
-                        for i in range(len(scope['cache'])):
-                            scope['cache'][i] = list(scope['cache'][i])
-                            for _ in range(len(scope['cache'][i])):
-                                del scope['cache'][i][0]
+                    try:
+                        if isinstance(scope['cache'], tuple) or isinstance(scope['cache'], list):
+                            scope['cache'] = list(scope['cache'])
+                            for i in range(len(scope['cache'])):
+                                scope['cache'][i] = list(scope['cache'][i])
+                                for _ in range(len(scope['cache'][i])):
+                                    del scope['cache'][i][0]
 
-                    else:
-                        for _ in range(len(scope['cache'].key_cache)):
-                            del scope['cache'].key_cache[0]
-                        for _ in range(len(scope['cache'].value_cache)):
-                            del scope['cache'].value_cache[0]
+                        else:
+                            for _ in range(len(scope['cache'].key_cache)):
+                                del scope['cache'].key_cache[0]
+                            for _ in range(len(scope['cache'].value_cache)):
+                                del scope['cache'].value_cache[0]
+                    except Exception as e:
+                        print('failed to clear cache')
 
                     scope.pop('cache', None)
 

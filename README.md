@@ -8,6 +8,7 @@ OpenAI compatibility using FastAPI HuggingFace Transformers, the models wrapped 
 4. Disconnected signal, so this is to ensure early stop.
 5. Properly cleanup KV Cache after each requests.
 6. Support Encoder-Decoder like T5.
+7. Continous batching for better throughput, for better performance, use transformers<=4.40.2
 
 ## how to install
 
@@ -35,10 +36,10 @@ python3 -m transformers_openai.main --help
 
 ```
 usage: main.py [-h] [--host HOST] [--port PORT] [--loglevel LOGLEVEL] [--model-type MODEL_TYPE] [--tokenizer-type TOKENIZER_TYPE]
-               [--tokenizer-use-fast TOKENIZER_USE_FAST] [--hf-model HF_MODEL] [--hotload HOTLOAD]
-               [--attn-implementation ATTN_IMPLEMENTATION] [--torch-dtype TORCH_DTYPE]
-               [--architecture-type {decoder,encoder-decoder}] [--cache-type CACHE_TYPE] [--n-positions N_POSITIONS]
-               [--batch-size BATCH_SIZE] [--accelerator-type ACCELERATOR_TYPE] [--max-concurrent MAX_CONCURRENT]
+               [--tokenizer-use-fast TOKENIZER_USE_FAST] [--hf-model HF_MODEL] [--hotload HOTLOAD] [--attn-implementation ATTN_IMPLEMENTATION]
+               [--torch-dtype TORCH_DTYPE] [--architecture-type {decoder,encoder-decoder}] [--cache-type CACHE_TYPE]
+               [--continous-batching CONTINOUS_BATCHING] [--continous-batching-microsleep CONTINOUS_BATCHING_MICROSLEEP]
+               [--n-positions N_POSITIONS] [--batch-size BATCH_SIZE] [--accelerator-type ACCELERATOR_TYPE] [--max-concurrent MAX_CONCURRENT]
 
 Configuration parser
 
@@ -62,7 +63,12 @@ options:
   --architecture-type {decoder,encoder-decoder}
                         Architecture type (default: decoder, env: ARCHITECTURE_TYPE)
   --cache-type CACHE_TYPE
-                        Cache type (default: DynamicCache, env: CACHE_TYPE)
+                        Cache type (default: none, env: CACHE_TYPE)
+  --continous-batching CONTINOUS_BATCHING
+                        Enable continous batching (default: False, env: CONTINOUS_BATCHING)
+  --continous-batching-microsleep CONTINOUS_BATCHING_MICROSLEEP
+                        microsleep to group continous batching, 1 / 1e-3 = 1k steps for second (default: 0.001, env:
+                        CONTINOUS_BATCHING_MICROSLEEP)
   --n-positions N_POSITIONS
                         Number of positions (default: 2048, env: N_POSITIONS)
   --batch-size BATCH_SIZE
@@ -81,7 +87,8 @@ options:
 
 ```bash
 python3 -m transformers_openai.main \
---host 0.0.0.0 --port 7088 --hf-model mesolitica/malaysian-tinyllama-1.1b-16k-instructions-v4
+--host 0.0.0.0 --port 7088 --hf-model mesolitica/malaysian-tinyllama-1.1b-16k-instructions-v4 \
+--cache-type none
 ```
 
 #### Using Docker

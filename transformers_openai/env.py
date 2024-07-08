@@ -80,8 +80,8 @@ def parse_arguments():
     )
     parser.add_argument(
         '--continous-batching-microsleep', type=float,
-        default=float(os.environ.get('CONTINOUS_BATCHING_MICROSLEEP', '5e-4')),
-        help='microsleep to group continous batching (default: %(default)s, env: CONTINOUS_BATCHING_MICROSLEEP)'
+        default=float(os.environ.get('CONTINOUS_BATCHING_MICROSLEEP', '1e-4')),
+        help='microsleep to group continous batching, 1 / 1e-3 = 1k steps for second (default: %(default)s, env: CONTINOUS_BATCHING_MICROSLEEP)'
     )
 
     parser.add_argument(
