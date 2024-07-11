@@ -6,6 +6,7 @@ import uuid
 import time
 import torch
 import uvicorn
+from datetime import datetime
 from fastapi import FastAPI, Request
 from sse_starlette import EventSourceResponse
 from transformers import cache_utils
@@ -41,7 +42,11 @@ class InsertMiddleware:
 
             scope['cache'] = getattr(cache_utils, args.cache_type, None)
             if scope['cache'] is not None:
-                scope['cache'] = scope['cache']()
+                if args.continous_batching:
+                    logging.warning('continous batching is enable, will ignore `CACHE_TYPE`.')
+                    scope['cache'] = None
+                else:
+                    scope['cache'] = scope['cache']()
 
             queue = asyncio.Queue()
 

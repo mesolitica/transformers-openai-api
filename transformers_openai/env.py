@@ -70,7 +70,7 @@ def parse_arguments():
         help='Architecture type (default: %(default)s, env: ARCHITECTURE_TYPE)'
     )
     parser.add_argument(
-        '--cache-type', default=os.environ.get('CACHE_TYPE', 'none'),
+        '--cache-type', default=os.environ.get('CACHE_TYPE', 'DynamicCache'),
         help='Cache type (default: %(default)s, env: CACHE_TYPE)'
     )
     parser.add_argument(
@@ -80,7 +80,7 @@ def parse_arguments():
     )
     parser.add_argument(
         '--continous-batching-microsleep', type=float,
-        default=float(os.environ.get('CONTINOUS_BATCHING_MICROSLEEP', '1e-4')),
+        default=float(os.environ.get('CONTINOUS_BATCHING_MICROSLEEP', '1e-3')),
         help='microsleep to group continous batching, 1 / 1e-3 = 1k steps for second (default: %(default)s, env: CONTINOUS_BATCHING_MICROSLEEP)'
     )
 

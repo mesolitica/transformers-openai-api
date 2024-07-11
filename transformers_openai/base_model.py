@@ -9,7 +9,7 @@ class Parameters(BaseModel):
     top_k: int = 50
     max_tokens: int = 256
     truncate: int = 2048
-    repetition_penalty: int = 1.0
+    repetition_penalty: float = 1.0
     stop: List[str] = []
 
 

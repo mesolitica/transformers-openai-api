@@ -6,11 +6,11 @@ from transformers_openai.function import (
     load_hf_model
 )
 from transformers_openai.base_model import ChatCompletionForm
+from transformers_openai.cache import DynamicLengthDecoderCache
 from fastapi import Request
 from sse_starlette import ServerSentEvent
 
 from datetime import datetime
-import torch.nn.functional as F
 import threading
 import asyncio
 import time
@@ -42,7 +42,7 @@ async def prefill():
             if not len(batch):
                 continue
 
-            logging.info(f'{str(datetime.now())} prefill batch size of {len(batch)}')
+            logging.debug(f'{str(datetime.now())} prefill batch size of {len(batch)}')
 
             futures = [batch[i][0] for i in range(len(batch))]
             inputs = [batch[i][1] for i in range(len(batch))]
@@ -63,13 +63,15 @@ async def prefill():
 
             out_logits = out[0]
             out_caches = out[1]
+
             caches = []
             for i in range(len(batch)):
                 cache = []
                 for k in range(len(out_caches)):
-                    cache_ = []
-                    for j in range(len(out_caches[k])):
-                        cache_.append(out_caches[k][j][i:i + 1, :, :lengths[i]])
+                    cache_ = [
+                        out_caches[k][0][i:i + 1, :, :lengths[i]],
+                        out_caches[k][1][i:i + 1, :, :lengths[i]]
+                    ]
                     cache.append(cache_)
                 caches.append(cache)
 
@@ -104,7 +106,7 @@ async def step():
             if not len(batch):
                 continue
 
-            logging.info(f'{str(datetime.now())} step batch size of {len(batch)}')
+            logging.debug(f'{str(datetime.now())} step batch size of {len(batch)}')
 
             futures = [batch[i][0] for i in range(len(batch))]
             inputs = [batch[i][1] for i in range(len(batch))]
@@ -112,50 +114,51 @@ async def step():
             caches = [batch[i][3] for i in range(len(batch))]
             lengths = [batch[i][4] for i in range(len(batch))]
 
-            max_len = max([caches[i][0][0].shape[2] for i in range(len(batch))])
-            max_len_lengths = max(lengths)
-            max_len = min(max_len, max_len_lengths)
-
-            cache_shape = caches[0][0][0].shape
-            cache_dtype = caches[0][0][0].dtype
             cache_device = caches[0][0][0].device
+
+            kv_len = [caches[i][0][0].shape[2] for i in range(len(batch))]
+            max_len = max(kv_len)
+            max_len_lengths = max(lengths)
+
+            cache = DynamicLengthDecoderCache(lengths=lengths)
+
             len_cache = len(caches[0])
             len_kv = len(caches[0][0])
 
-            temp_caches = []
             for n in range(len_cache):
-                cache = []
-                for k in range(len_kv):
-                    c = []
-                    for i in range(len(batch)):
-                        c.append(caches[i][n][k])
 
-                    c = [F.pad(c[i][:, :, :max_len], (0, 0, 0, max(
-                        0, max_len - c[i].shape[2]), 0, 0, 0, 0)) for i in range(len(c))]
-                    c = torch.concat(c)
-                    cache.append(c)
+                key_cache = []
+                value_cache = []
+                for i in range(len(batch)):
+                    key_cache.append(caches[i][n][0])
+                    value_cache.append(caches[i][n][1])
 
-                temp_caches.append(cache)
+                cache.key_cache.append(key_cache)
+                cache.value_cache.append(value_cache)
 
             inputs = torch.concat(inputs, dim=0)
 
+            position_ids = [torch.tensor([[lengths[i] - 1]]) for i in range(len(lengths))]
+            position_ids = torch.concat(position_ids).to(cache_device)
+
             out = model(
                 inputs,
-                past_key_values=temp_caches,
+                position_ids=position_ids,
+                past_key_values=cache,
                 use_cache=True,
                 return_dict=False
             )
 
             out_logits = out[0]
             out_caches = out[1]
+
             caches = []
             for i in range(len(batch)):
                 cache = []
                 for k in range(len(out_caches)):
-                    cache_ = []
-                    for j in range(len(out_caches[k])):
-                        cache_.append(out_caches[k][j][i:i + 1])
-                    cache.append(cache_)
+                    keys = out_caches.key_cache[k]
+                    values = out_caches.value_cache[k]
+                    cache.append((keys[i], values[i]))
                 caches.append(cache)
 
             for i in range(len(futures)):

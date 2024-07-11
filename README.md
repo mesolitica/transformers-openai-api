@@ -1,14 +1,14 @@
 # transformers-openai-api
 
-OpenAI compatibility using FastAPI HuggingFace Transformers, the models wrapped properly with EventSource so it can serve better concurrency.
+Lightweight continous batching OpenAI compatibility using HuggingFace Transformers.
 
 1. Streaming token.
 2. Can serve user defined max concurrency.
-3. Each request got it's own KV Cache using Transformers Dynamic Cache.
+3. Each request got it's own KV Cache using Transformers Cache.
 4. Disconnected signal, so this is to ensure early stop.
 5. Properly cleanup KV Cache after each requests.
 6. Support Encoder-Decoder like T5.
-7. Continous batching for better throughput, for better performance, use transformers<=4.40.2
+7. Continous batching for better throughput.
 
 ## how to install
 
@@ -36,10 +36,12 @@ python3 -m transformers_openai.main --help
 
 ```
 usage: main.py [-h] [--host HOST] [--port PORT] [--loglevel LOGLEVEL] [--model-type MODEL_TYPE] [--tokenizer-type TOKENIZER_TYPE]
-               [--tokenizer-use-fast TOKENIZER_USE_FAST] [--hf-model HF_MODEL] [--hotload HOTLOAD] [--attn-implementation ATTN_IMPLEMENTATION]
-               [--torch-dtype TORCH_DTYPE] [--architecture-type {decoder,encoder-decoder}] [--cache-type CACHE_TYPE]
+               [--tokenizer-use-fast TOKENIZER_USE_FAST] [--hf-model HF_MODEL] [--hotload HOTLOAD]
+               [--attn-implementation ATTN_IMPLEMENTATION] [--torch-dtype TORCH_DTYPE]
+               [--architecture-type {decoder,encoder-decoder}] [--cache-type CACHE_TYPE]
                [--continous-batching CONTINOUS_BATCHING] [--continous-batching-microsleep CONTINOUS_BATCHING_MICROSLEEP]
-               [--n-positions N_POSITIONS] [--batch-size BATCH_SIZE] [--accelerator-type ACCELERATOR_TYPE] [--max-concurrent MAX_CONCURRENT]
+               [--n-positions N_POSITIONS] [--batch-size BATCH_SIZE] [--accelerator-type ACCELERATOR_TYPE]
+               [--max-concurrent MAX_CONCURRENT]
 
 Configuration parser
 
@@ -63,7 +65,7 @@ options:
   --architecture-type {decoder,encoder-decoder}
                         Architecture type (default: decoder, env: ARCHITECTURE_TYPE)
   --cache-type CACHE_TYPE
-                        Cache type (default: none, env: CACHE_TYPE)
+                        Cache type (default: DynamicCache, env: CACHE_TYPE)
   --continous-batching CONTINOUS_BATCHING
                         Enable continous batching (default: False, env: CONTINOUS_BATCHING)
   --continous-batching-microsleep CONTINOUS_BATCHING_MICROSLEEP
@@ -83,27 +85,19 @@ options:
 
 ### Run Decoder
 
-#### Using CLI
+#### Continous batching
+
+```
+python3 -m transformers_openai.main \
+--host 0.0.0.0 --port 7088 --hf-model mesolitica/malaysian-tinyllama-1.1b-16k-instructions-v4 \
+--continous-batching true
+```
+
+#### Non-continous batching
 
 ```bash
 python3 -m transformers_openai.main \
---host 0.0.0.0 --port 7088 --hf-model mesolitica/malaysian-tinyllama-1.1b-16k-instructions-v4 \
---cache-type none
-```
-
-#### Using Docker
-
-```bash
-ATTN_IMPLEMENTATION=flash_attention_2 \
-HF_MODEL=mesolitica/malaysian-tinyllama-1.1b-16k-instructions-v4 \
-MODEL_TYPE=AutoModelForCausalLM \
-TOKENIZER_TYPE=AutoTokenizer \
-TOKENIZER_USE_FAST=true \
-ARCHITECTURE_TYPE=decoder \
-CACHE_TYPE=DynamicCache \
-TORCH_DTYPE=bfloat16 \
-HOTLOAD=true \
-docker-compose up --build
+--host 0.0.0.0 --port 7088 --hf-model mesolitica/malaysian-tinyllama-1.1b-16k-instructions-v4
 ```
 
 #### Example OpenAI library
@@ -141,13 +135,13 @@ https://github.com/mesolitica/transformers-openai-api/assets/19810909/5a8c873b-2
 
 ### Run Encoder-Decoder
 
-#### Using CLI
+#### Continous batching
 
 ```bash
 python3 -m transformers_openai.main \
 --host 0.0.0.0 --port 7088 \
 --attn-implementation eager \
---model-type T5ForConditionalGeneration \
+--model-type transformers_openai.models.T5ForConditionalGeneration \
 --tokenizer-type AutoTokenizer \
 --tokenizer-use-fast false \
 --architecture-type encoder-decoder \
@@ -156,19 +150,19 @@ python3 -m transformers_openai.main \
 --hf-model google/flan-t5-base
 ```
 
-#### Using Docker
+#### Non-continous batching
 
 ```bash
-ATTN_IMPLEMENTATION=eager \
-HF_MODEL=google/flan-t5-base \
-MODEL_TYPE=T5ForConditionalGeneration \
-TOKENIZER_TYPE=AutoTokenizer \
-TOKENIZER_USE_FAST=false \
-ARCHITECTURE_TYPE=encoder-decoder \
-TORCH_DTYPE=bfloat16 \
-CACHE_TYPE=none \
-HOTLOAD=true \
-docker-compose up --build
+python3.10 -m transformers_openai.main \
+--host 0.0.0.0 --port 7088 \
+--attn-implementation sdpa \
+--model-type transformers_openai.models.T5ForConditionalGeneration \
+--tokenizer-type AutoTokenizer \
+--tokenizer-use-fast false \
+--architecture-type encoder-decoder \
+--torch-dtype bfloat16 \
+--cache-type none \
+--hf-model google/flan-t5-base
 ```
 
 #### Example OpenAI library
@@ -323,3 +317,15 @@ WARNING:root:Cancelling ae6af2a2-c1a3-4e5f-a9cf-eb1cf645870e due to disconnect
 Rate of 5 users per second, total requests up to 50 users for 30 seconds on shared RTX 3090 Ti,
 
 ![alt text](stress-test/graph-t5.png)
+
+### [Mistral 7B GPTQ](stress-test/mistral_7b_gtpq_continous.py)
+
+Rate of 1 users per second, total requests up to 10 users for 30 seconds on shared RTX 3090 Ti,
+
+#### Non-continous batch
+
+![alt text](stress-test/mistral_7b_gtpq_without_continous.png)
+
+#### Continous batch
+
+![alt text](stress-test/mistral_7b_gtpq_continous.png)
