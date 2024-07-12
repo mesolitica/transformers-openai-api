@@ -3,10 +3,15 @@ from transformers_openai.function import (
     sample,
     decode,
     load_hf_tokenizer,
-    load_hf_model
+    load_hf_model,
+    pad_attention_mask,
+    pad_hidden_encoder,
 )
 from transformers_openai.base_model import ChatCompletionForm
-from transformers_openai.cache import DynamicLengthDecoderCache
+from transformers_openai.cache import (
+    DynamicLengthDecoderCache,
+    DynamicLengthEncoderDecoderCache,
+)
 from fastapi import Request
 from sse_starlette import ServerSentEvent
 
@@ -36,6 +41,8 @@ async def prefill():
                 try:
                     request = await asyncio.wait_for(prefill_queue.get(), timeout=1e-4)
                     batch.append(request)
+                    if len(batch) > args.continous_batching_batch_size:
+                        break
                 except asyncio.TimeoutError:
                     break
 
@@ -46,7 +53,6 @@ async def prefill():
 
             futures = [batch[i][0] for i in range(len(batch))]
             inputs = [batch[i][1] for i in range(len(batch))]
-            out_encoders = [batch[i][2] for i in range(len(batch))]
             lengths = [batch[i][4] for i in range(len(batch))]
 
             max_len = max(lengths)
@@ -54,12 +60,26 @@ async def prefill():
             inputs = [{'input_ids': inputs[i][0]} for i in range(len(inputs))]
             input_ids = tokenizer.pad(inputs, padding=True, return_tensors='pt').to('cuda')
 
-            out = model(
-                **input_ids,
-                past_key_values=None,
-                use_cache=True,
-                return_dict=False
-            )
+            if args.architecture_type == 'encoder-decoder':
+                out_encoder = model.encoder(**input_ids, return_dict=False)
+                inputs = torch.tensor([[model.config.decoder_start_token_id]]
+                                      * len(batch), device='cuda')
+                out = model(
+                    attention_mask=input_ids['attention_mask'],
+                    decoder_input_ids=inputs,
+                    encoder_outputs=out_encoder,
+                    past_key_values=None,
+                    use_cache=True,
+                    return_dict=False
+                )
+                out_encoder = out_encoder[0]
+            else:
+                out = model(
+                    **input_ids,
+                    past_key_values=None,
+                    use_cache=True,
+                    return_dict=False
+                )
 
             out_logits = out[0]
             out_caches = out[1]
@@ -69,14 +89,27 @@ async def prefill():
                 cache = []
                 for k in range(len(out_caches)):
                     cache_ = [
-                        out_caches[k][0][i:i + 1, :, :lengths[i]],
-                        out_caches[k][1][i:i + 1, :, :lengths[i]]
+                        out_caches[k][0][i:i + 1],
+                        out_caches[k][1][i:i + 1],
                     ]
+                    if args.architecture_type == 'encoder-decoder':
+                        cache_.extend([
+                            out_caches[k][2][i:i + 1, :, :lengths[i]],
+                            out_caches[k][3][i:i + 1, :, :lengths[i]]
+                        ])
                     cache.append(cache_)
                 caches.append(cache)
 
+            if args.architecture_type == 'encoder-decoder':
+                last = []
+                for i in range(len(batch)):
+                    last.append((input_ids['attention_mask'][i:i + 1,
+                                :lengths[i]], out_encoder[i:i + 1, :lengths[i]]))
+            else:
+                last = [None] * len(batch)
+
             for i in range(len(futures)):
-                futures[i].set_result((out_logits[i: i + 1, -1:], caches[i]))
+                futures[i].set_result((out_logits[i: i + 1, -1:], caches[i], last[i]))
 
             for k in range(len(out_caches)):
                 temp = list(out_caches[k])
@@ -100,6 +133,8 @@ async def step():
                 try:
                     request = await asyncio.wait_for(step_queue.get(), timeout=1e-4)
                     batch.append(request)
+                    if len(batch) > args.continous_batching_batch_size:
+                        break
                 except asyncio.TimeoutError:
                     break
 
@@ -120,7 +155,11 @@ async def step():
             max_len = max(kv_len)
             max_len_lengths = max(lengths)
 
-            cache = DynamicLengthDecoderCache(lengths=lengths)
+            if args.architecture_type == 'encoder-decoder':
+                cache = DynamicLengthEncoderDecoderCache
+            else:
+                cache = DynamicLengthDecoderCache
+            cache = cache(lengths=lengths)
 
             len_cache = len(caches[0])
             len_kv = len(caches[0][0])
@@ -136,36 +175,68 @@ async def step():
                 cache.key_cache.append(key_cache)
                 cache.value_cache.append(value_cache)
 
+                if args.architecture_type == 'encoder-decoder':
+                    key_cache = []
+                    value_cache = []
+                    for i in range(len(batch)):
+                        key_cache.append(caches[i][n][2])
+                        value_cache.append(caches[i][n][3])
+
+                    cache.cross_key_cache.append(key_cache)
+                    cache.cross_value_cache.append(value_cache)
+
             inputs = torch.concat(inputs, dim=0)
 
-            position_ids = [torch.tensor([[lengths[i] - 1]]) for i in range(len(lengths))]
-            position_ids = torch.concat(position_ids).to(cache_device)
+            if args.architecture_type == 'encoder-decoder':
 
-            out = model(
-                inputs,
-                position_ids=position_ids,
-                past_key_values=cache,
-                use_cache=True,
-                return_dict=False
-            )
+                attention_mask = [out_encoders[i][0] for i in range(len(out_encoders))]
+                out_encoder = [out_encoders[i][1] for i in range(len(out_encoders))]
+
+                attention_mask = pad_attention_mask(attention_mask)
+                out_encoder = pad_hidden_encoder(out_encoder)
+
+                print(attention_mask.shape, out_encoder.shape)
+
+                out = model(
+                    attention_mask=attention_mask,
+                    decoder_input_ids=inputs,
+                    encoder_outputs=(out_encoder,),
+                    past_key_values=cache,
+                    use_cache=True,
+                    return_dict=False
+                )
+            else:
+                position_ids = [torch.tensor([[lengths[i] - 1]]) for i in range(len(lengths))]
+                position_ids = torch.concat(position_ids).to(cache_device)
+                out = model(
+                    inputs,
+                    position_ids=position_ids,
+                    past_key_values=cache,
+                    use_cache=True,
+                    return_dict=False
+                )
 
             out_logits = out[0]
-            out_caches = out[1]
 
             caches = []
             for i in range(len(batch)):
-                cache = []
-                for k in range(len(out_caches)):
-                    keys = out_caches.key_cache[k]
-                    values = out_caches.value_cache[k]
-                    cache.append((keys[i], values[i]))
-                caches.append(cache)
+                new_cache = []
+                for k in range(len(cache)):
+                    keys = cache.key_cache[k]
+                    values = cache.value_cache[k]
+                    v = [keys[i], values[i]]
+                    if args.architecture_type == 'encoder-decoder':
+                        keys = cache.cross_key_cache[k]
+                        values = cache.cross_value_cache[k]
+                        v.extend([keys[i], values[i]])
+                    new_cache.append(v)
+                caches.append(new_cache)
 
             for i in range(len(futures)):
                 futures[i].set_result((out_logits[i: i + 1, -1:], caches[i]))
 
-            for k in range(len(out_caches)):
-                temp = list(out_caches[k])
+            for k in range(len(cache)):
+                temp = list(cache[k])
                 for j in range(len(temp)):
                     del temp[0]
 
@@ -204,10 +275,12 @@ async def stream(inputs, id, created, form, request):
 
     with torch.no_grad():
 
-        if args.architecture_type == 'encoder-decoder':
+        if args.architecture_type == 'encoder-decoder' and not args.continous_batching:
             out_encoder = model.encoder(inputs, return_dict=False)
             out_encoder = out_encoder
             inputs = torch.tensor([[model.config.decoder_start_token_id]], device='cuda')
+        else:
+            out_encoder = None
 
         try:
 
@@ -254,6 +327,9 @@ async def stream(inputs, id, created, form, request):
                 if cache_is_none:
                     cache = out[1]
                     request.scope['cache'] = cache
+
+                if args.architecture_type == 'encoder-decoder' and out_encoder is None:
+                    out_encoder = out[2]
 
                 idx_next, probs = sample(
                     logits,

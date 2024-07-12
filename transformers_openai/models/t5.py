@@ -25,6 +25,7 @@ from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 
 from transformers.activations import ACT2FN
+from transformers.cache_utils import Cache
 from transformers.modeling_outputs import (
     BaseModelOutput,
     BaseModelOutputWithPastAndCrossAttentions,
@@ -343,8 +344,13 @@ class T5LayerFF(nn.Module):
 
 
 class T5Attention(nn.Module):
-    def __init__(self, config: T5Config, has_relative_attention_bias=False):
+    def __init__(
+            self,
+            config: T5Config,
+            has_relative_attention_bias=False,
+            layer_idx: Optional[int] = None):
         super().__init__()
+        self.layer_idx = layer_idx
         self.is_decoder = config.is_decoder
         self.has_relative_attention_bias = has_relative_attention_bias
         self.relative_attention_num_buckets = config.relative_attention_num_buckets
@@ -633,12 +639,17 @@ class T5SdpaAttention(T5Attention):
 
         real_seq_length = seq_length
 
-        if past_key_value is not None:
-            if len(past_key_value) != 2:
-                raise ValueError(
-                    f"past_key_value should have 2 past states: keys and values. Got { len(past_key_value)} past states"
-                )
-            real_seq_length += past_key_value[0].shape[2] if query_length is None else query_length
+        if isinstance(past_key_value, Cache):
+            real_seq_length += past_key_value.get_seq_length(
+                self.layer_idx) if query_length is None else query_length
+
+        else:
+            if past_key_value is not None:
+                if len(past_key_value) != 2:
+                    raise ValueError(
+                        f"past_key_value should have 2 past states: keys and values. Got { len(past_key_value)} past states"
+                    )
+                real_seq_length += past_key_value[0].shape[2] if query_length is None else query_length
 
         key_length = real_seq_length if key_value_states is None else key_value_states.shape[1]
 
@@ -682,11 +693,24 @@ class T5SdpaAttention(T5Attention):
         # (batch_size, n_heads, seq_length, dim_per_head)
         query_states = shape(self.q(hidden_states))
 
-        # get key/value states
-        key_states = project(hidden_states, self.k, key_value_states,
-                             past_key_value[0] if past_key_value is not None else None)
-        value_states = project(hidden_states, self.v, key_value_states,
-                               past_key_value[1] if past_key_value is not None else None)
+        if isinstance(past_key_value, Cache):
+            key_states = project(
+                hidden_states, self.k, key_value_states, None
+            )
+            value_states = project(
+                hidden_states, self.v, key_value_states, None
+            )
+            key_states, value_states = past_key_value.update(
+                key_states,
+                value_states,
+                self.layer_idx,
+            )
+
+        else:
+            key_states = project(hidden_states, self.k, key_value_states,
+                                 past_key_value[0] if past_key_value is not None else None)
+            value_states = project(hidden_states, self.v, key_value_states,
+                                   past_key_value[1] if past_key_value is not None else None)
 
         if position_bias is None:
             if not self.has_relative_attention_bias:
@@ -745,11 +769,12 @@ T5_ATTENTION_CLASSES = {
 
 
 class T5LayerSelfAttention(nn.Module):
-    def __init__(self, config, has_relative_attention_bias=False):
+    def __init__(self, config, has_relative_attention_bias=False, layer_idx: Optional[int] = None):
         super().__init__()
         self.SelfAttention = T5_ATTENTION_CLASSES[config._attn_implementation](
             config,
-            has_relative_attention_bias=has_relative_attention_bias
+            has_relative_attention_bias=has_relative_attention_bias,
+            layer_idx=layer_idx,
         )
         self.layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
@@ -819,18 +844,22 @@ class T5LayerCrossAttention(nn.Module):
 
 
 class T5Block(nn.Module):
-    def __init__(self, config, has_relative_attention_bias=False):
+    def __init__(self, config, has_relative_attention_bias=False, layer_idx: Optional[int] = None):
         super().__init__()
         self.is_decoder = config.is_decoder
         self.layer = nn.ModuleList()
         self.layer.append(
             T5LayerSelfAttention(
                 config,
-                has_relative_attention_bias=has_relative_attention_bias))
+                has_relative_attention_bias=has_relative_attention_bias,
+                layer_idx=layer_idx,
+            )
+        )
         if self.is_decoder:
             self.layer.append(T5LayerCrossAttention(config))
 
         self.layer.append(T5LayerFF(config))
+        self.layer_idx = layer_idx
 
     def forward(
         self,
@@ -853,14 +882,12 @@ class T5Block(nn.Module):
                     "`past_key_values` is passed to the encoder. Please make sure this is intended.")
             expected_num_past_key_values = 2 if encoder_hidden_states is None else 4
 
-            if len(past_key_value) != expected_num_past_key_values:
-                raise ValueError(
-                    f"There should be {expected_num_past_key_values} past states. "
-                    f"{'2 (key / value) for cross attention. ' if expected_num_past_key_values == 4 else ''}"
-                    f"Got {len(past_key_value)} past key / value states")
-
-            self_attn_past_key_value = past_key_value[:2]
-            cross_attn_past_key_value = past_key_value[2:]
+            if isinstance(past_key_value, Cache):
+                self_attn_past_key_value = past_key_value
+                cross_attn_past_key_value = past_key_value.get_cross_kv(self.layer_idx)
+            else:
+                self_attn_past_key_value = past_key_value[:2]
+                cross_attn_past_key_value = past_key_value[2:]
         else:
             self_attn_past_key_value, cross_attn_past_key_value = None, None
 
@@ -1096,9 +1123,9 @@ class T5Stack(T5PreTrainedModel):
         self.embed_tokens = embed_tokens
         self.is_decoder = config.is_decoder
 
-        self.block = nn.ModuleList(
-            [T5Block(config, has_relative_attention_bias=bool(i == 0)) for i in range(config.num_layers)]
-        )
+        self.block = nn.ModuleList([T5Block(config,
+                                            has_relative_attention_bias=bool(i == 0),
+                                            layer_idx=i) for i in range(config.num_layers)])
         self.final_layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
 
@@ -1205,8 +1232,15 @@ class T5Stack(T5PreTrainedModel):
         batch_size, seq_length = input_shape
 
         # required mask seq length can be calculated via length of past
-        mask_seq_length = past_key_values[0][0].shape[2] + \
-            seq_length if past_key_values is not None else seq_length
+        if past_key_values is not None:
+            if isinstance(past_key_values, Cache):
+                mask_seq_length = past_key_values.get_seq_length()
+            else:
+                mask_seq_length = past_key_values[0][0].shape[2]
+
+            mask_seq_length = mask_seq_length + seq_length
+        else:
+            mask_seq_length = seq_length
 
         if use_cache is True:
             if not self.is_decoder:
@@ -1256,9 +1290,14 @@ class T5Stack(T5PreTrainedModel):
 
         hidden_states = self.dropout(inputs_embeds)
 
-        for i, (layer_module, past_key_value) in enumerate(zip(self.block, past_key_values)):
+        for i in range(len(self.block)):
+            layer_module = self.block[i]
             layer_head_mask = head_mask[i]
             cross_attn_layer_head_mask = cross_attn_head_mask[i]
+            if isinstance(past_key_values, Cache):
+                past_key_value = past_key_values
+            else:
+                past_key_value = past_key_values[i]
             # Model parallel
             if self.model_parallel:
                 torch.cuda.set_device(hidden_states.device)

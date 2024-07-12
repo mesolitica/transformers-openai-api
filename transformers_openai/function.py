@@ -1,5 +1,6 @@
 from transformers_openai.env import args
 import torch
+import torch.nn.functional as F
 import logging
 import importlib
 from typing import Optional
@@ -8,13 +9,32 @@ import transformers
 SPIECE_UNDERLINE = "▁"
 
 
+def pad_attention_mask(attention_mask):
+    maxlen = max([attention_mask[i].shape[1] for i in range(len(attention_mask))])
+    attention_mask = [
+        F.pad(
+            attention_mask[i],
+            (0, maxlen - attention_mask[i].shape[1], 0, 0)) for i in range(
+            len(attention_mask))]
+    return torch.concat(attention_mask)
+
+
+def pad_hidden_encoder(out_encoder):
+    maxlen = max([out_encoder[i].shape[1] for i in range(len(out_encoder))])
+    out_encoder = [
+        F.pad(
+            out_encoder[i],
+            (0, 0, 0, maxlen - out_encoder[i].shape[1], 0, 0)) for i in range(
+            len(out_encoder))]
+    return torch.concat(out_encoder)
+
+
 def load_hf_model():
     if 't5' in args.model_type.lower() and 'sdpa' not in args.attn_implementation.lower():
         logging.warning(
             'you are using T5 without SDPA, might want to set `--attn-implementation sdpa --model-type transformers_openai.models.T5ForConditionalGeneration`')
 
     if '.' in args.model_type:
-
         module_name, class_name = args.model_type.rsplit('.', 1)
         module = importlib.import_module(module_name)
         class_ = getattr(module, class_name)
@@ -24,7 +44,7 @@ def load_hf_model():
 
     logging.info(f'loading {class_} {args.hf_model}')
 
-    if 'auto_gptq' in module_name:
+    if 'auto_gptq' in args.model_type:
         return class_.from_quantized(args.hf_model)
 
     else:

@@ -83,19 +83,10 @@ def parse_arguments():
         default=float(os.environ.get('CONTINOUS_BATCHING_MICROSLEEP', '1e-3')),
         help='microsleep to group continous batching, 1 / 1e-3 = 1k steps for second (default: %(default)s, env: CONTINOUS_BATCHING_MICROSLEEP)'
     )
-
     parser.add_argument(
-        '--n-positions',
-        type=int,
-        default=int(
-            os.environ.get(
-                'N_POSITIONS',
-                '2048')),
-        help='Number of positions (default: %(default)s, env: N_POSITIONS)'
-    )
-    parser.add_argument(
-        '--batch-size', type=int, default=int(os.environ.get('BATCH_SIZE', '1')),
-        help='Batch size (default: %(default)s, env: BATCH_SIZE)'
+        '--continous-batching-batch-size', type=float,
+        default=int(os.environ.get('CONTINOUS_BATCHING_BATCH_SIZE', '10')),
+        help='maximum of batch size during continous batching (default: %(default)s, env: CONTINOUS_BATCHING_BATCH_SIZE)'
     )
     parser.add_argument(
         '--accelerator-type', default=os.environ.get('ACCELERATOR_TYPE', 'cuda'),
@@ -109,6 +100,20 @@ def parse_arguments():
                 'MAX_CONCURRENT',
                 '100')),
         help='Maximum concurrent requests (default: %(default)s, env: MAX_CONCURRENT)'
+    )
+
+    parser.add_argument(
+        '--neuronx-n-positions',
+        type=int,
+        default=int(
+            os.environ.get(
+                'NEURONX_N_POSITIONS',
+                '2048')),
+        help='NeuronX number of positions (default: %(default)s, env: N_POSITIONS)'
+    )
+    parser.add_argument(
+        '--neuronx-batch-size', type=int, default=int(os.environ.get('NEURONX_BATCH_SIZE', '1')),
+        help='NeuronX batch size (default: %(default)s, env: BATCH_SIZE)'
     )
 
     args = parser.parse_args()

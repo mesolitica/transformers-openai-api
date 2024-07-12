@@ -140,13 +140,14 @@ https://github.com/mesolitica/transformers-openai-api/assets/19810909/5a8c873b-2
 ```bash
 python3 -m transformers_openai.main \
 --host 0.0.0.0 --port 7088 \
---attn-implementation eager \
+--attn-implementation sdpa \
 --model-type transformers_openai.models.T5ForConditionalGeneration \
 --tokenizer-type AutoTokenizer \
 --tokenizer-use-fast false \
 --architecture-type encoder-decoder \
 --torch-dtype bfloat16 \
 --cache-type none \
+--continous-batching true \
 --hf-model google/flan-t5-base
 ```
 
