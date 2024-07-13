@@ -135,7 +135,6 @@ class DynamicLengthEncoderDecoderCache(Cache):
             return 0
         lengths = [self.key_cache[layer_idx][i].shape[2]
                    for i in range(len(self.key_cache[layer_idx]))]
-        print(lengths)
         return max(lengths)
 
     def get_max_length(self) -> Optional[int]:

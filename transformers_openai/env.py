@@ -80,12 +80,12 @@ def parse_arguments():
     )
     parser.add_argument(
         '--continous-batching-microsleep', type=float,
-        default=float(os.environ.get('CONTINOUS_BATCHING_MICROSLEEP', '1e-3')),
+        default=float(os.environ.get('CONTINOUS_BATCHING_MICROSLEEP', '1e-4')),
         help='microsleep to group continous batching, 1 / 1e-3 = 1k steps for second (default: %(default)s, env: CONTINOUS_BATCHING_MICROSLEEP)'
     )
     parser.add_argument(
         '--continous-batching-batch-size', type=float,
-        default=int(os.environ.get('CONTINOUS_BATCHING_BATCH_SIZE', '10')),
+        default=int(os.environ.get('CONTINOUS_BATCHING_BATCH_SIZE', '20')),
         help='maximum of batch size during continous batching (default: %(default)s, env: CONTINOUS_BATCHING_BATCH_SIZE)'
     )
     parser.add_argument(

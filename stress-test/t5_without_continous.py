@@ -9,14 +9,13 @@ gpu_stats = gpustat.GPUStatCollection.new_query()
 """
 Make sure already running this,
 
-ATTN_IMPLEMENTATION=eager \
-HF_MODEL=google/flan-t5-base \
-MODEL_TYPE=T5ForConditionalGeneration \
-TOKENIZER_TYPE=AutoTokenizer \
-TOKENIZER_USE_FAST=false \
-ARCHITECTURE_TYPE=encoder-decoder \
-TORCH_DTYPE=bfloat16 \
-CACHE_TYPE=none HOTLOAD=true docker-compose up --build
+python3 -m transformers_openai.main \
+--host 0.0.0.0 --port 7088 \
+--attn-implementation sdpa \
+--model-type transformers_openai.models.T5ForConditionalGeneration \
+--tokenizer-type AutoTokenizer --tokenizer-use-fast false \
+--architecture-type encoder-decoder --torch-dtype bfloat16 \
+--cache-type none --continous-batching false --hf-model google/flan-t5-base
 """
 
 questions = [

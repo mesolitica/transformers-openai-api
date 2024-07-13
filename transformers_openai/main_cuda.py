@@ -42,7 +42,7 @@ async def prefill():
                 try:
                     request = await asyncio.wait_for(prefill_queue.get(), timeout=1e-4)
                     batch.append(request)
-                    if len(batch) > args.continous_batching_batch_size:
+                    if len(batch) >= args.continous_batching_batch_size:
                         break
                 except asyncio.TimeoutError:
                     break
@@ -134,7 +134,7 @@ async def step():
                 try:
                     request = await asyncio.wait_for(step_queue.get(), timeout=1e-4)
                     batch.append(request)
-                    if len(batch) > args.continous_batching_batch_size:
+                    if len(batch) >= args.continous_batching_batch_size:
                         break
                 except asyncio.TimeoutError:
                     break
@@ -161,6 +161,7 @@ async def step():
                 cache = DynamicLengthEncoderDecoderCache
             else:
                 cache = DynamicLengthDecoderCache
+
             cache = cache(lengths=lengths)
 
             len_cache = len(caches[0])
@@ -178,6 +179,7 @@ async def step():
                 cache.value_cache.append(value_cache)
 
                 if args.architecture_type == 'encoder-decoder':
+
                     key_cache = []
                     value_cache = []
                     for i in range(len(batch)):
@@ -188,17 +190,26 @@ async def step():
                     cache.cross_value_cache.append(value_cache)
 
             inputs = torch.concat(inputs, dim=0)
+            attention_mask = efficient_attention_mask(
+                batch_size=len(lengths),
+                max_len=max_len_lengths,
+                lengths=lengths,
+                device=cache_device,
+                dtype=cache_dtype,
+                ones=args.architecture_type == 'encoder-decoder'
+            )
 
             if args.architecture_type == 'encoder-decoder':
 
-                attention_mask = [out_encoders[i][0] for i in range(len(out_encoders))]
+                encoder_attention_mask = [out_encoders[i][0] for i in range(len(out_encoders))]
                 out_encoder = [out_encoders[i][1] for i in range(len(out_encoders))]
 
-                attention_mask = pad_attention_mask(attention_mask)
+                encoder_attention_mask = pad_attention_mask(encoder_attention_mask)
                 out_encoder = pad_hidden_encoder(out_encoder)
 
                 out = model(
-                    attention_mask=attention_mask,
+                    attention_mask=encoder_attention_mask,
+                    decoder_attention_mask=attention_mask[:, 0],
                     decoder_input_ids=inputs,
                     encoder_outputs=(out_encoder,),
                     past_key_values=cache,
@@ -208,14 +219,6 @@ async def step():
             else:
                 position_ids = [torch.tensor([[lengths[i] - 1]]) for i in range(len(lengths))]
                 position_ids = torch.concat(position_ids).to(cache_device)
-
-                attention_mask = efficient_attention_mask(
-                    batch_size=len(lengths),
-                    max_len=max_len_lengths,
-                    lengths=lengths,
-                    device=cache_device,
-                    dtype=cache_dtype
-                )
 
                 out = model(
                     inputs,
@@ -304,7 +307,11 @@ async def stream(inputs, id, created, form, request):
                             q = step_queue
 
                         future = asyncio.Future()
-                        await q.put((future, inputs, out_encoder, cache, initial_length + k))
+                        if k == 0:
+                            l = initial_length
+                        else:
+                            l = k + 1
+                        await q.put((future, inputs, out_encoder, cache, l))
                         out = await future
                     else:
                         out = model(
@@ -323,7 +330,7 @@ async def stream(inputs, id, created, form, request):
                             q = step_queue
 
                         future = asyncio.Future()
-                        await q.put((future, inputs, None, cache, initial_length + k))
+                        await q.put((future, inputs, None, cache, k + initial_length))
                         out = await future
                     else:
                         out = model(

@@ -8,7 +8,7 @@ Lightweight continous batching OpenAI compatibility using HuggingFace Transforme
 4. Disconnected signal, so this is to ensure early stop.
 5. Properly cleanup KV Cache after each requests.
 6. Support Encoder-Decoder like T5.
-7. Continous batching for better throughput.
+7. Continous batching for better throughput, support both Encoder-Decoder and Decoder.
 
 ## how to install
 
@@ -154,7 +154,7 @@ python3 -m transformers_openai.main \
 #### Non-continous batching
 
 ```bash
-python3.10 -m transformers_openai.main \
+python3 -m transformers_openai.main \
 --host 0.0.0.0 --port 7088 \
 --attn-implementation sdpa \
 --model-type transformers_openai.models.T5ForConditionalGeneration \
@@ -313,13 +313,19 @@ WARNING:root:Cancelling ae6af2a2-c1a3-4e5f-a9cf-eb1cf645870e due to disconnect
 
 ## [Stress test](stress-test)
 
-### [FlanT5 Base](stress-test/t5.py)
+### FlanT5 Base
 
 Rate of 5 users per second, total requests up to 50 users for 30 seconds on shared RTX 3090 Ti,
 
-![alt text](stress-test/graph-t5.png)
+#### Non-continous batch
 
-### [Mistral 7B GPTQ](stress-test/mistral_7b_gtpq_continous.py)
+![alt text](stress-test/t5_without_continous.png)
+
+#### Continous batch
+
+![alt text](stress-test/t5_continous.png)
+
+### Mistral 7B GPTQ
 
 Rate of 5 users per second, total requests up to 50 users for 60 seconds on shared RTX 3090 Ti,
 
