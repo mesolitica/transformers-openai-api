@@ -321,7 +321,7 @@ Rate of 5 users per second, total requests up to 50 users for 30 seconds on shar
 
 ### [Mistral 7B GPTQ](stress-test/mistral_7b_gtpq_continous.py)
 
-Rate of 1 users per second, total requests up to 10 users for 30 seconds on shared RTX 3090 Ti,
+Rate of 5 users per second, total requests up to 50 users for 60 seconds on shared RTX 3090 Ti,
 
 #### Non-continous batch
 

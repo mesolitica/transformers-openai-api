@@ -9,6 +9,16 @@ import transformers
 SPIECE_UNDERLINE = "▁"
 
 
+def efficient_attention_mask(batch_size, max_len, lengths, device, dtype):
+    lengths = torch.tensor(lengths)
+    mask = torch.arange(max_len).expand(
+        batch_size, 1, 1, max_len) > lengths.view(
+        batch_size, 1, 1, 1)
+
+    mask = mask.float().masked_fill_(mask, torch.finfo(dtype).min)
+    return mask.to(device).type(dtype)
+
+
 def pad_attention_mask(attention_mask):
     maxlen = max([attention_mask[i].shape[1] for i in range(len(attention_mask))])
     attention_mask = [

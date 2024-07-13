@@ -6,6 +6,7 @@ from transformers_openai.function import (
     load_hf_model,
     pad_attention_mask,
     pad_hidden_encoder,
+    efficient_attention_mask,
 )
 from transformers_openai.base_model import ChatCompletionForm
 from transformers_openai.cache import (
@@ -89,8 +90,8 @@ async def prefill():
                 cache = []
                 for k in range(len(out_caches)):
                     cache_ = [
-                        out_caches[k][0][i:i + 1],
-                        out_caches[k][1][i:i + 1],
+                        out_caches[k][0][i:i + 1, :, :lengths[i]],
+                        out_caches[k][1][i:i + 1, :, :lengths[i]],
                     ]
                     if args.architecture_type == 'encoder-decoder':
                         cache_.extend([
@@ -149,6 +150,7 @@ async def step():
             caches = [batch[i][3] for i in range(len(batch))]
             lengths = [batch[i][4] for i in range(len(batch))]
 
+            cache_dtype = caches[0][0][0].dtype
             cache_device = caches[0][0][0].device
 
             kv_len = [caches[i][0][0].shape[2] for i in range(len(batch))]
@@ -195,8 +197,6 @@ async def step():
                 attention_mask = pad_attention_mask(attention_mask)
                 out_encoder = pad_hidden_encoder(out_encoder)
 
-                print(attention_mask.shape, out_encoder.shape)
-
                 out = model(
                     attention_mask=attention_mask,
                     decoder_input_ids=inputs,
@@ -208,8 +208,18 @@ async def step():
             else:
                 position_ids = [torch.tensor([[lengths[i] - 1]]) for i in range(len(lengths))]
                 position_ids = torch.concat(position_ids).to(cache_device)
+
+                attention_mask = efficient_attention_mask(
+                    batch_size=len(lengths),
+                    max_len=max_len_lengths,
+                    lengths=lengths,
+                    device=cache_device,
+                    dtype=cache_dtype
+                )
+
                 out = model(
                     inputs,
+                    attention_mask=attention_mask,
                     position_ids=position_ids,
                     past_key_values=cache,
                     use_cache=True,
