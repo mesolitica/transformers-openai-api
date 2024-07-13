@@ -40,12 +40,13 @@ usage: main.py [-h] [--host HOST] [--port PORT] [--loglevel LOGLEVEL] [--model-t
                [--attn-implementation ATTN_IMPLEMENTATION] [--torch-dtype TORCH_DTYPE]
                [--architecture-type {decoder,encoder-decoder}] [--cache-type CACHE_TYPE]
                [--continous-batching CONTINOUS_BATCHING] [--continous-batching-microsleep CONTINOUS_BATCHING_MICROSLEEP]
-               [--n-positions N_POSITIONS] [--batch-size BATCH_SIZE] [--accelerator-type ACCELERATOR_TYPE]
-               [--max-concurrent MAX_CONCURRENT]
+               [--continous-batching-batch-size CONTINOUS_BATCHING_BATCH_SIZE] [--accelerator-type ACCELERATOR_TYPE]
+               [--max-concurrent MAX_CONCURRENT] [--neuronx-n-positions NEURONX_N_POSITIONS]
+               [--neuronx-batch-size NEURONX_BATCH_SIZE]
 
 Configuration parser
 
-options:
+optional arguments:
   -h, --help            show this help message and exit
   --host HOST           host name to host the app (default: 0.0.0.0, env: HOSTNAME)
   --port PORT           port to host the app (default: 7088, env: PORT)
@@ -69,16 +70,18 @@ options:
   --continous-batching CONTINOUS_BATCHING
                         Enable continous batching (default: False, env: CONTINOUS_BATCHING)
   --continous-batching-microsleep CONTINOUS_BATCHING_MICROSLEEP
-                        microsleep to group continous batching, 1 / 1e-3 = 1k steps for second (default: 0.001, env:
+                        microsleep to group continous batching, 1 / 1e-3 = 1k steps for second (default: 0.0001, env:
                         CONTINOUS_BATCHING_MICROSLEEP)
-  --n-positions N_POSITIONS
-                        Number of positions (default: 2048, env: N_POSITIONS)
-  --batch-size BATCH_SIZE
-                        Batch size (default: 1, env: BATCH_SIZE)
+  --continous-batching-batch-size CONTINOUS_BATCHING_BATCH_SIZE
+                        maximum of batch size during continous batching (default: 20, env: CONTINOUS_BATCHING_BATCH_SIZE)
   --accelerator-type ACCELERATOR_TYPE
                         Accelerator type (default: cuda, env: ACCELERATOR_TYPE)
   --max-concurrent MAX_CONCURRENT
                         Maximum concurrent requests (default: 100, env: MAX_CONCURRENT)
+  --neuronx-n-positions NEURONX_N_POSITIONS
+                        NeuronX number of positions (default: 2048, env: N_POSITIONS)
+  --neuronx-batch-size NEURONX_BATCH_SIZE
+                        NeuronX batch size (default: 1, env: BATCH_SIZE)
 ```
 
 **We support both args and OS environment**.
