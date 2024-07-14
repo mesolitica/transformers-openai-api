@@ -35,11 +35,11 @@ For docker, Make sure you already installed Docker and Docker Compose that has N
 python3 -m transformers_openai.main --help
 ```
 
-```
+```text
 usage: main.py [-h] [--host HOST] [--port PORT] [--loglevel LOGLEVEL] [--model-type MODEL_TYPE] [--tokenizer-type TOKENIZER_TYPE]
-               [--tokenizer-use-fast TOKENIZER_USE_FAST] [--hf-model HF_MODEL] [--hotload HOTLOAD]
-               [--attn-implementation ATTN_IMPLEMENTATION] [--torch-dtype TORCH_DTYPE]
-               [--architecture-type {decoder,encoder-decoder}] [--cache-type CACHE_TYPE]
+               [--tokenizer-use-fast TOKENIZER_USE_FAST] [--processor-type PROCESSOR_TYPE] [--hf-model HF_MODEL]
+               [--hotload HOTLOAD] [--attn-implementation ATTN_IMPLEMENTATION] [--torch-dtype TORCH_DTYPE]
+               [--architecture-type {decoder,encoder-decoder}] [--serving-type {chat,whisper}] [--cache-type CACHE_TYPE]
                [--continous-batching CONTINOUS_BATCHING] [--continous-batching-microsleep CONTINOUS_BATCHING_MICROSLEEP]
                [--continous-batching-batch-size CONTINOUS_BATCHING_BATCH_SIZE] [--accelerator-type ACCELERATOR_TYPE]
                [--max-concurrent MAX_CONCURRENT] [--neuronx-n-positions NEURONX_N_POSITIONS]
@@ -47,7 +47,7 @@ usage: main.py [-h] [--host HOST] [--port PORT] [--loglevel LOGLEVEL] [--model-t
 
 Configuration parser
 
-optional arguments:
+options:
   -h, --help            show this help message and exit
   --host HOST           host name to host the app (default: 0.0.0.0, env: HOSTNAME)
   --port PORT           port to host the app (default: 7088, env: PORT)
@@ -58,6 +58,8 @@ optional arguments:
                         Tokenizer type (default: AutoTokenizer, env: TOKENIZER_TYPE)
   --tokenizer-use-fast TOKENIZER_USE_FAST
                         Use fast tokenizer (default: True, env: TOKENIZER_USE_FAST)
+  --processor-type PROCESSOR_TYPE
+                        Processor type (default: AutoTokenizer, env: PROCESSOR_TYPE)
   --hf-model HF_MODEL   Hugging Face model (default: mesolitica/malaysian-llama2-7b-32k-instructions, env: HF_MODEL)
   --hotload HOTLOAD     Enable hot loading (default: True, env: HOTLOAD)
   --attn-implementation ATTN_IMPLEMENTATION
@@ -66,6 +68,8 @@ optional arguments:
                         Torch data type (default: bfloat16, env: TORCH_DTYPE)
   --architecture-type {decoder,encoder-decoder}
                         Architecture type (default: decoder, env: ARCHITECTURE_TYPE)
+  --serving-type {chat,whisper}
+                        Serving type (default: chat, env: SERVING_TYPE)
   --cache-type CACHE_TYPE
                         Cache type (default: DynamicCache, env: CACHE_TYPE)
   --continous-batching CONTINOUS_BATCHING
@@ -338,6 +342,8 @@ curl -X 'POST' 'http://localhost:7088/audio/transcriptions' \
 -F 'response_format=srt' \
 -F 'stream=true'
 ```
+
+https://github.com/user-attachments/assets/f73138ce-fddc-4441-b278-7b20e0b9b078
 
 ## How to simulate disconnected?
 
