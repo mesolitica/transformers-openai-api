@@ -9,6 +9,7 @@ Lightweight continous batching OpenAI compatibility using HuggingFace Transforme
 5. Properly cleanup KV Cache after each requests.
 6. Support Encoder-Decoder like T5.
 7. Continous batching for better throughput, support both Encoder-Decoder and Decoder.
+8. Support Audio Transcriptions with streaming token using Whisper.
 
 ## how to install
 
