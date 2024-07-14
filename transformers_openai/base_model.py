@@ -42,3 +42,28 @@ class ChatMessage(BaseModel):
 class ChatCompletionForm(Parameters):
     messages: List[ChatMessage]
     stream: bool = False
+
+
+class Segment(BaseModel):
+    id: int
+    seek: int
+    start: float
+    end: float
+    text: str
+    tokens: List[int]
+    temperature: float
+    avg_logprob: float
+    compression_ratio: float
+    no_speech_prob: float
+
+
+class TranscriptionVerboseJsonResponse(BaseModel):
+    task: str = "transcribe"
+    language: str
+    duration: float
+    text: str
+    segments: List[Segment]
+
+
+class TranscriptionJsonResponse(BaseModel):
+    text: str

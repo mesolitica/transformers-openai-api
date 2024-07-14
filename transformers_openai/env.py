@@ -38,6 +38,13 @@ def parse_arguments():
         help='Use fast tokenizer (default: %(default)s, env: TOKENIZER_USE_FAST)'
     )
     parser.add_argument(
+        '--processor-type',
+        default=os.environ.get(
+            'PROCESSOR_TYPE',
+            'AutoTokenizer'),
+        help='Processor type (default: %(default)s, env: PROCESSOR_TYPE)'
+    )
+    parser.add_argument(
         '--hf-model',
         default=os.environ.get(
             'HF_MODEL',
@@ -68,6 +75,12 @@ def parse_arguments():
         ),
         choices=['decoder', 'encoder-decoder'],
         help='Architecture type (default: %(default)s, env: ARCHITECTURE_TYPE)'
+    )
+    parser.add_argument(
+        '--serving-type',
+        default=os.environ.get('SERVING_TYPE', 'chat'),
+        choices=['chat', 'whisper'],
+        help='Serving type (default: %(default)s, env: SERVING_TYPE)'
     )
     parser.add_argument(
         '--cache-type', default=os.environ.get('CACHE_TYPE', 'DynamicCache'),

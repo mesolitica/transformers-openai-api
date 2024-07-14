@@ -76,17 +76,20 @@ class DynamicLengthDecoderCache(Cache):
 
 class DynamicLengthEncoderDecoderCache(Cache):
 
-    def __init__(self, lengths) -> None:
+    def __init__(self, lengths, whisper_mode=False) -> None:
         self.key_cache: List[torch.Tensor] = []
         self.value_cache: List[torch.Tensor] = []
         self.cross_key_cache: List[torch.Tensor] = []
         self.cross_value_cache: List[torch.Tensor] = []
         self._seen_tokens = max(lengths)
+        self.whisper_mode = whisper_mode
 
     def get_cross_kv(self, layer_idx):
         if layer_idx < len(self):
-            k = pad_kv(self.cross_key_cache[layer_idx])
-            v = pad_kv(self.cross_value_cache[layer_idx])
+            k, v = self.cross_key_cache[layer_idx], self.cross_value_cache[layer_idx]
+            if not self.whisper_mode:
+                k = pad_kv(k)
+                v = pad_kv(v)
             return k, v
         else:
             raise KeyError(
@@ -98,7 +101,15 @@ class DynamicLengthEncoderDecoderCache(Cache):
         sequence length.
         """
         if layer_idx < len(self):
-            return self.key_cache[layer_idx], self.value_cache[layer_idx]
+            if self.whisper_mode:
+                return (
+                    self.key_cache[layer_idx],
+                    self.value_cache[layer_idx],
+                    self.cross_key_cache[layer_idx],
+                    self.cross_value_cache[layer_idx],
+                )
+            else:
+                return self.key_cache[layer_idx], self.value_cache[layer_idx]
         else:
             raise KeyError(
                 f"Cache only has {len(self)} layers, attempted to access layer with index {layer_idx}")

@@ -100,4 +100,3 @@ class HelloWorldUser(HttpUser):
             'stream': False,
         }
         r = self.client.post('/chat/completions', json=json_data)
-        print(r.json())

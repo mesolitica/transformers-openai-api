@@ -17,7 +17,6 @@ from fastapi import Request
 from sse_starlette import ServerSentEvent
 
 from datetime import datetime
-import threading
 import asyncio
 import time
 import logging
@@ -30,7 +29,6 @@ tokenizer = None
 
 prefill_queue = asyncio.Queue()
 step_queue = asyncio.Queue()
-processing = False
 
 
 async def prefill():
@@ -217,8 +215,7 @@ async def step():
                     return_dict=False
                 )
             else:
-                position_ids = [torch.tensor([[lengths[i] - 1]]) for i in range(len(lengths))]
-                position_ids = torch.concat(position_ids).to(cache_device)
+                position_ids = torch.tensor([[l - 1 for l in lengths]]).T.to(cache_device)
 
                 out = model(
                     inputs,
@@ -282,8 +279,6 @@ async def stream(inputs, id, created, form, request):
 
     mask_penalty = torch.ones((len(inputs), model.config.vocab_size)).cuda()
 
-    before = time.time()
-
     initial_length = inputs.shape[1]
 
     with torch.no_grad():
@@ -301,16 +296,15 @@ async def stream(inputs, id, created, form, request):
 
                 if args.architecture_type == 'encoder-decoder':
                     if args.continous_batching:
+
                         if k == 0:
                             q = prefill_queue
-                        else:
-                            q = step_queue
-
-                        future = asyncio.Future()
-                        if k == 0:
                             l = initial_length
                         else:
+                            q = step_queue
                             l = k + 1
+
+                        future = asyncio.Future()
                         await q.put((future, inputs, out_encoder, cache, l))
                         out = await future
                     else:
@@ -351,6 +345,7 @@ async def stream(inputs, id, created, form, request):
                 idx_next, probs = sample(
                     logits,
                     mask_penalty,
+                    temperature=form.temperature,
                     top_k=form.top_k,
                     top_p=form.top_p
                 )

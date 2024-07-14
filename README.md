@@ -260,6 +260,84 @@ data: {"id": "20e9d233-6f6c-4dc4-95a9-7dcf077e9b57", "choices": [{"delta": {"con
 data: {"id": "20e9d233-6f6c-4dc4-95a9-7dcf077e9b57", "choices": [{"delta": {"content": ".", "function_call": null, "role": null, "tool_calls": null}, "finish_reason": null, "index": 0, "logprobs": null}], "created": 1720157833, "model": "model", "object": "chat.completion.chunk", "system_fingerprint": null}
 ```
 
+### Run Whisper
+
+#### Continous batching
+
+```bash
+python3.10 -m transformers_openai.main \
+--host 0.0.0.0 --port 7088 \
+--attn-implementation sdpa \
+--model-type transformers_openai.models.WhisperForConditionalGeneration \
+--processor-type AutoProcessor \
+--serving-type whisper \
+--torch-dtype bfloat16 \
+--cache-type none \
+--continous-batching true \
+--hf-model openai/whisper-large-v3
+```
+
+#### Non-continous batching
+
+```bash
+python3 -m transformers_openai.main \
+--host 0.0.0.0 --port 7088 \
+--attn-implementation sdpa \
+--model-type WhisperForConditionalGeneration \
+--processor-type AutoProcessor \
+--serving-type whisper \
+--torch-dtype bfloat16 \
+--cache-type none \
+--hf-model openai/whisper-large-v3
+```
+
+#### Example OpenAI library
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    api_key='-',
+    base_url = 'http://localhost:7088'
+)
+
+audio_file= open("stress-test/audio/Lex-Fridman-on-Grigori-Perelman-turning-away-1million-and-Fields-Medal.mp3", "rb")
+transcription = client.audio.transcriptions.create(
+    model="model", 
+    file=audio_file,
+    response_format="verbose_json"
+)
+transcription
+```
+
+Output,
+
+```
+Transcription(text="these photos of him looking very broke, like he could use the money. He turned away the money. He turned away everything. You know, there's, you just have to listen to the inner voice. You have to listen to yourself and make the decisions that don't make any sense for the rest of the world and make sense to you. I mean, Bob Dylan didn't show up to pick up his Nobel Peace Prize. That's punk. Yeah. Yeah. He probably grew in notoriety for that. Maybe he just doesn't like going to Sweden,", task='transcribe', language='en', duration=59.14, segments=[{'id': 0, 'seek': 0, 'start': 30.0, 'end': 33.2, 'text': 'these photos of him looking very broke,', 'tokens': [42678, 5787, 295, 796, 1237, 588, 6902, 11], 'temperature': 0.0, 'avg_logprob': 0.0, 'compression_ratio': 1.0, 'no_speech_prob': 0.0}, {'id': 1, 'seek': 0, 'start': 33.6, 'end': 34.82, 'text': 'like he could use the money.', 'tokens': [4092, 415, 727, 764, 264, 1460, 13], 'temperature': 0.0, 'avg_logprob': 0.0, 'compression_ratio': 1.0, 'no_speech_prob': 0.0}, {'id': 2, 'seek': 0, 'start': 35.28, 'end': 36.6, 'text': 'He turned away the money.', 'tokens': [5205, 3574, 1314, 264, 1460, 13], 'temperature': 0.0, 'avg_logprob': 0.0, 'compression_ratio': 1.0, 'no_speech_prob': 0.0}, {'id': 3, 'seek': 0, 'start': 36.78, 'end': 37.56, 'text': 'He turned away everything.', 'tokens': [5205, 3574, 1314, 1203, 13], 'temperature': 0.0, 'avg_logprob': 0.0, 'compression_ratio': 1.0, 'no_speech_prob': 0.0}, {'id': 4, 'seek': 0, 'start': 38.46, 'end': 41.54, 'text': "You know, there's, you just have to listen", 'tokens': [3223, 458, 11, 456, 311, 11, 291, 445, 362, 281, 2140], 'temperature': 0.0, 'avg_logprob': 0.0, 'compression_ratio': 1.0, 'no_speech_prob': 0.0}, {'id': 5, 'seek': 0, 'start': 41.54, 'end': 42.22, 'text': 'to the inner voice.', 'tokens': [1353, 264, 7284, 3177, 13], 'temperature': 0.0, 'avg_logprob': 0.0, 'compression_ratio': 1.0, 'no_speech_prob': 0.0}, {'id': 6, 'seek': 0, 'start': 42.32, 'end': 44.019999999999996, 'text': 'You have to listen to yourself and make the decisions', 'tokens': [3223, 362, 281, 2140, 281, 1803, 293, 652, 264, 5327], 'temperature': 0.0, 'avg_logprob': 0.0, 'compression_ratio': 1.0, 'no_speech_prob': 0.0}, {'id': 7, 'seek': 0, 'start': 44.019999999999996, 'end': 46.120000000000005, 'text': "that don't make any sense for the rest of the world", 'tokens': [6780, 500, 380, 652, 604, 2020, 337, 264, 1472, 295, 264, 1002], 'temperature': 0.0, 'avg_logprob': 0.0, 'compression_ratio': 1.0, 'no_speech_prob': 0.0}, {'id': 8, 'seek': 0, 'start': 46.120000000000005, 'end': 47.620000000000005, 'text': 'and make sense to you.', 'tokens': [474, 652, 2020, 281, 291, 13], 'temperature': 0.0, 'avg_logprob': 0.0, 'compression_ratio': 1.0, 'no_speech_prob': 0.0}, {'id': 9, 'seek': 0, 'start': 47.96, 'end': 49.480000000000004, 'text': "I mean, Bob Dylan didn't show up to pick up", 'tokens': [40, 914, 11, 6085, 28160, 994, 380, 855, 493, 281, 1888, 493], 'temperature': 0.0, 'avg_logprob': 0.0, 'compression_ratio': 1.0, 'no_speech_prob': 0.0}, {'id': 10, 'seek': 0, 'start': 49.480000000000004, 'end': 50.44, 'text': 'his Nobel Peace Prize.', 'tokens': [18300, 24611, 13204, 22604, 13], 'temperature': 0.0, 'avg_logprob': 0.0, 'compression_ratio': 1.0, 'no_speech_prob': 0.0}, {'id': 11, 'seek': 0, 'start': 50.68, 'end': 51.28, 'text': "That's punk.", 'tokens': [6390, 311, 25188, 13], 'temperature': 0.0, 'avg_logprob': 0.0, 'compression_ratio': 1.0, 'no_speech_prob': 0.0}, {'id': 12, 'seek': 0, 'start': 51.5, 'end': 51.72, 'text': 'Yeah.', 'tokens': [5973, 13], 'temperature': 0.0, 'avg_logprob': 0.0, 'compression_ratio': 1.0, 'no_speech_prob': 0.0}, {'id': 13, 'seek': 0, 'start': 52.1, 'end': 52.36, 'text': 'Yeah.', 'tokens': [5973, 13], 'temperature': 0.0, 'avg_logprob': 0.0, 'compression_ratio': 1.0, 'no_speech_prob': 0.0}, {'id': 14, 'seek': 0, 'start': 52.36, 'end': 56.22, 'text': 'He probably grew in notoriety for that.', 'tokens': [5205, 1391, 6109, 294, 46772, 4014, 337, 300, 13], 'temperature': 0.0, 'avg_logprob': 0.0, 'compression_ratio': 1.0, 'no_speech_prob': 0.0}, {'id': 15, 'seek': 0, 'start': 57.04, 'end': 59.14, 'text': "Maybe he just doesn't like going to Sweden,", 'tokens': [29727, 415, 445, 1177, 380, 411, 516, 281, 17727, 11], 'temperature': 0.0, 'avg_logprob': 0.0, 'compression_ratio': 1.0, 'no_speech_prob': 0.0}])
+```
+
+We also added extra metrics for Whisper, Seconds per Second,
+
+```text
+INFO:root:Complete 62656397-804d-4865-9e5f-8847ff821723, time first token 0.11367368698120117 seconds, time taken 2.6682631969451904 seconds, TPS 132.6705702815537, Seconds Per Second 36.549547515272074
+```
+
+Means, in one second, it can processed 36 seconds of audio.
+
+#### Example streaming
+
+OpenAI client does not support streaming, so you must use requests library with streaming, example use cURL,
+
+```python
+curl -X 'POST' 'http://localhost:7088/audio/transcriptions' \
+-H 'accept: application/json' \
+-H 'Content-Type: multipart/form-data' \
+-F 'file=@stress-test/audio/Lex-Fridman-on-Grigori-Perelman-turning-away-1million-and-Fields-Medal.mp3;type=audio/mpeg' \
+-F 'model=whisper' \
+-F 'response_format=srt' \
+-F 'stream=true'
+```
+
 ## How to simulate disconnected?
 
 Simple,
@@ -339,3 +417,15 @@ Rate of 5 users per second, total requests up to 50 users for 60 seconds on shar
 #### Continous batch
 
 ![alt text](stress-test/mistral_7b_gtpq_continous.png)
+
+### Whisper Large V3
+
+Rate of 5 users per second, total requests up to 30 users for 60 seconds on shared RTX 3090 Ti,
+
+#### Non-continous batch
+
+![alt text](stress-test/whisper_without_continous.png)
+
+#### Continous batch
+
+![alt text](stress-test/whisper_continous.png)

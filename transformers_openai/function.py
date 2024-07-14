@@ -11,16 +11,15 @@ SPIECE_UNDERLINE = "▁"
 
 def efficient_attention_mask(batch_size, max_len, lengths, device, dtype, ones=True):
     lengths = torch.tensor(lengths)
+    left = torch.arange(max_len).expand(
+        batch_size, 1, 1, max_len)
+    right = lengths.view(
+        batch_size, 1, 1, 1)
     if ones:
-        mask = torch.arange(max_len).expand(
-            batch_size, 1, 1, max_len) < lengths.view(
-            batch_size, 1, 1, 1)
+        mask = left < right
         mask = mask.float()
     else:
-        mask = torch.arange(max_len).expand(
-            batch_size, 1, 1, max_len) > lengths.view(
-            batch_size, 1, 1, 1)
-
+        mask = left > right
         mask = mask.float().masked_fill_(mask, torch.finfo(dtype).min)
     return mask.to(device).type(dtype)
 
@@ -69,6 +68,13 @@ def load_hf_model():
             attn_implementation=args.attn_implementation,
             torch_dtype=getattr(torch, args.torch_dtype),
         ).cuda()
+
+
+def load_hf_processor():
+    processor = getattr(transformers, args.processor_type).from_pretrained(
+        args.hf_model,
+    )
+    return processor
 
 
 def load_hf_tokenizer():
@@ -126,7 +132,7 @@ def logits_to_probs(
         idx_next = multinomial_sample_one_no_sync(probs)
     else:
         probs = logits
-        idx_next = logits.argmax(-1)
+        idx_next = logits.argmax(-1, keepdim=True)
 
     return idx_next, probs
 
@@ -139,3 +145,42 @@ def sample(
     top_p: Optional[float] = None
 ):
     return logits_to_probs(logits[0, -1], mask_penalty[0], temperature, top_k, top_p)
+
+
+def format_timestamp(
+    seconds: float, always_include_hours: bool = False, decimal_marker: str = "."
+):
+    assert seconds >= 0, "non-negative timestamp expected"
+    milliseconds = round(seconds * 1000.0)
+
+    hours = milliseconds // 3_600_000
+    milliseconds -= hours * 3_600_000
+
+    minutes = milliseconds // 60_000
+    milliseconds -= minutes * 60_000
+
+    seconds = milliseconds // 1_000
+    milliseconds -= seconds * 1_000
+
+    hours_marker = f"{hours:02d}:" if always_include_hours or hours > 0 else ""
+    return (
+        f"{hours_marker}{minutes:02d}:{seconds:02d}{decimal_marker}{milliseconds:03d}"
+    )
+
+
+def cleanup_cache(cache):
+    try:
+        if isinstance(cache, tuple) or isinstance(cache, list):
+            cache = list(cache)
+            for i in range(len(cache)):
+                cache[i] = list(cache[i])
+                for _ in range(len(cache[i])):
+                    del cache[i][0]
+
+        else:
+            for _ in range(len(cache.key_cache)):
+                del cache.key_cache[0]
+            for _ in range(len(cache.value_cache)):
+                del cache.value_cache[0]
+    except Exception as e:
+        logging.warning('failed to clear cache')

@@ -1,5 +1,6 @@
 from transformers_openai.env import args
 from transformers_openai.base_model import ChatCompletionForm
+from transformers_openai.function import cleanup_cache
 import asyncio
 import logging
 import uuid
@@ -8,17 +9,28 @@ import torch
 import uvicorn
 from datetime import datetime
 from fastapi import FastAPI, Request
+from fastapi import File, Form, UploadFile
 from sse_starlette import EventSourceResponse
 from transformers import cache_utils
 from collections import deque
 
-if args.accelerator_type == 'cuda':
-    from transformers_openai.main_cuda import (
-        chat_completions,
-        load_model,
-        prefill,
-        step,
-    )
+if args.serving_type == 'chat':
+    if args.accelerator_type == 'cuda':
+        from transformers_openai.main_cuda import (
+            chat_completions,
+            load_model,
+            prefill,
+            step,
+        )
+if args.serving_type == 'whisper':
+    if args.accelerator_type == 'cuda':
+        from transformers_openai.main_whisper_cuda import (
+            audio_completions,
+            load_model,
+            prefill,
+            step,
+        )
+
 
 HEADERS = {
     'Content-Type': 'text/event-stream',
@@ -71,33 +83,24 @@ class InsertMiddleware:
                     time_taken_max_tokens = scope['request']['time_max_tokens'] - \
                         scope['request']['time_first_token']
                     tps = scope['request']['total_tokens'] / time_taken_max_tokens
-                    logging.info(
-                        f"Complete {scope['request']['uuid']}, time first token {time_taken_first_token} seconds, time taken {time_taken_max_tokens} seconds, TPS {tps}")
+
+                    if 'total_seconds' in scope['request']:
+                        sps = scope['request']['total_seconds'] / time_taken_max_tokens
+                        extra_whisper = f', Seconds Per Second {sps}'
+                    else:
+                        extra_whisper = ''
+
+                    s = f"Complete {scope['request']['uuid']}, time first token {time_taken_first_token} seconds, time taken {time_taken_max_tokens} seconds, TPS {tps}{extra_whisper}"
+                    logging.info(s)
             except asyncio.CancelledError:
                 logging.warning(f"Cancelling {scope['request']['uuid']} due to disconnect")
             finally:
 
                 if 'cache' in scope and scope['cache'] is not None:
-
-                    try:
-                        if isinstance(scope['cache'], tuple) or isinstance(scope['cache'], list):
-                            scope['cache'] = list(scope['cache'])
-                            for i in range(len(scope['cache'])):
-                                scope['cache'][i] = list(scope['cache'][i])
-                                for _ in range(len(scope['cache'][i])):
-                                    del scope['cache'][i][0]
-
-                        else:
-                            for _ in range(len(scope['cache'].key_cache)):
-                                del scope['cache'].key_cache[0]
-                            for _ in range(len(scope['cache'].value_cache)):
-                                del scope['cache'].value_cache[0]
-                    except Exception as e:
-                        print('failed to clear cache')
-
+                    cleanup_cache(scope['cache'])
                     scope.pop('cache', None)
 
-                    torch.cuda.empty_cache()
+                torch.cuda.empty_cache()
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -130,18 +133,56 @@ app = FastAPI()
 
 app.add_middleware(InsertMiddleware, max_concurrent=args.max_concurrent)
 
+if args.serving_type == 'chat':
+    @app.post('/chat/completions')
+    async def chat_completions_main(
+        form: ChatCompletionForm,
+        request: Request = None,
+    ):
+        generator = chat_completions(form=form, request=request)
+        r = await generator
+        if form.stream:
+            return EventSourceResponse(r, headers=HEADERS)
+        else:
+            return r
 
-@app.post('/chat/completions')
-async def chat_completions_main(
-    form: ChatCompletionForm,
-    request: Request = None,
-):
-    generator = chat_completions(form=form, request=request)
-    r = await generator
-    if form.stream:
-        return EventSourceResponse(r, headers=HEADERS)
-    else:
-        return r
+if args.serving_type == 'whisper':
+    @app.post('/audio/transcriptions')
+    async def audio_transcriptions_main(
+        file: bytes = File(),
+        model: str = Form('base'),
+        language: str = Form(None),
+        response_format: str = Form('text'),
+        timestamp_granularities: str = Form('segment'),
+        stream: bool = Form(False),
+        repetition_penalty: float = Form(1.0),
+        temperature: float = Form(0.0),
+        top_p: float = Form(0.95),
+        top_k: int = Form(50),
+        request: Request = None,
+    ):
+        if isinstance(language, str):
+            language = language.lower().strip()
+            if language in {'null', 'none'}:
+                language = None
+
+        generator = audio_completions(
+            file=file,
+            language=language,
+            response_format=response_format,
+            timestamp_granularities=timestamp_granularities,
+            stream=stream,
+            repetition_penalty=repetition_penalty,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            request=request,
+        )
+        r = await generator
+        if stream:
+            return EventSourceResponse(r, headers=HEADERS)
+        else:
+            return r
 
 if args.continous_batching:
     @app.on_event("startup")
