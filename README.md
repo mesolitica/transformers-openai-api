@@ -27,8 +27,6 @@ git clone https://github.com/mesolitica/transformers-openai-api && cd transforme
 
 ## how to local
 
-For docker, Make sure you already installed Docker and Docker Compose that has Nvidia GPU access, https://docs.docker.com/config/containers/resource_constraints/#gpu
-
 ### Supported parameters
 
 ```bash
