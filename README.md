@@ -1,6 +1,6 @@
 # transformers-openai-api
 
-Lightweight continous batching OpenAI compatibility using HuggingFace Transformers.
+Lightweight continuous batching OpenAI compatibility using HuggingFace Transformers.
 
 1. Streaming token.
 2. Can serve user defined max concurrency.
@@ -8,7 +8,7 @@ Lightweight continous batching OpenAI compatibility using HuggingFace Transforme
 4. Disconnected signal, so this is to ensure early stop.
 5. Properly cleanup KV Cache after each requests.
 6. Support Encoder-Decoder like T5.
-7. Continous batching for better throughput, support both Encoder-Decoder and Decoder.
+7. Continuous batching for better throughput, support both Encoder-Decoder and Decoder.
 8. Support Audio Transcriptions with streaming token using Whisper.
 
 ## how to install
@@ -40,14 +40,14 @@ usage: main.py [-h] [--host HOST] [--port PORT] [--loglevel LOGLEVEL] [--model-t
                [--tokenizer-use-fast TOKENIZER_USE_FAST] [--processor-type PROCESSOR_TYPE] [--hf-model HF_MODEL]
                [--hotload HOTLOAD] [--attn-implementation ATTN_IMPLEMENTATION] [--torch-dtype TORCH_DTYPE]
                [--architecture-type {decoder,encoder-decoder}] [--serving-type {chat,whisper}] [--cache-type CACHE_TYPE]
-               [--continous-batching CONTINOUS_BATCHING] [--continous-batching-microsleep CONTINOUS_BATCHING_MICROSLEEP]
-               [--continous-batching-batch-size CONTINOUS_BATCHING_BATCH_SIZE] [--accelerator-type ACCELERATOR_TYPE]
+               [--continuous-batching CONTINUOUS_BATCHING] [--continuous-batching-microsleep CONTINUOUS_BATCHING_MICROSLEEP]
+               [--continuous-batching-batch-size CONTINUOUS_BATCHING_BATCH_SIZE] [--accelerator-type ACCELERATOR_TYPE]
                [--max-concurrent MAX_CONCURRENT] [--neuronx-n-positions NEURONX_N_POSITIONS]
                [--neuronx-batch-size NEURONX_BATCH_SIZE]
 
 Configuration parser
 
-options:
+optional arguments:
   -h, --help            show this help message and exit
   --host HOST           host name to host the app (default: 0.0.0.0, env: HOSTNAME)
   --port PORT           port to host the app (default: 7088, env: PORT)
@@ -72,13 +72,13 @@ options:
                         Serving type (default: chat, env: SERVING_TYPE)
   --cache-type CACHE_TYPE
                         Cache type (default: DynamicCache, env: CACHE_TYPE)
-  --continous-batching CONTINOUS_BATCHING
-                        Enable continous batching (default: False, env: CONTINOUS_BATCHING)
-  --continous-batching-microsleep CONTINOUS_BATCHING_MICROSLEEP
-                        microsleep to group continous batching, 1 / 1e-3 = 1k steps for second (default: 0.0001, env:
-                        CONTINOUS_BATCHING_MICROSLEEP)
-  --continous-batching-batch-size CONTINOUS_BATCHING_BATCH_SIZE
-                        maximum of batch size during continous batching (default: 20, env: CONTINOUS_BATCHING_BATCH_SIZE)
+  --continuous-batching CONTINUOUS_BATCHING
+                        Enable continuous batching (default: False, env: CONTINUOUS_BATCHING)
+  --continuous-batching-microsleep CONTINUOUS_BATCHING_MICROSLEEP
+                        microsleep to group continuous batching, 1 / 1e-3 = 1k steps for second (default: 0.0001, env:
+                        CONTINUOUS_BATCHING_MICROSLEEP)
+  --continuous-batching-batch-size CONTINUOUS_BATCHING_BATCH_SIZE
+                        maximum of batch size during continuous batching (default: 20, env: CONTINUOUS_BATCHING_BATCH_SIZE)
   --accelerator-type ACCELERATOR_TYPE
                         Accelerator type (default: cuda, env: ACCELERATOR_TYPE)
   --max-concurrent MAX_CONCURRENT
@@ -93,7 +93,7 @@ options:
 
 ### Run Decoder
 
-#### Continous batching
+#### Continuous batching
 
 ```
 python3 -m transformers_openai.main \
@@ -101,7 +101,7 @@ python3 -m transformers_openai.main \
 --continous-batching true
 ```
 
-#### Non-continous batching
+#### Non-continuous batching
 
 ```bash
 python3 -m transformers_openai.main \
@@ -143,7 +143,7 @@ https://github.com/mesolitica/transformers-openai-api/assets/19810909/5a8c873b-2
 
 ### Run Encoder-Decoder
 
-#### Continous batching
+#### Continuous batching
 
 ```bash
 python3 -m transformers_openai.main \
@@ -159,7 +159,7 @@ python3 -m transformers_openai.main \
 --hf-model google/flan-t5-base
 ```
 
-#### Non-continous batching
+#### Non-continuous batching
 
 ```bash
 python3 -m transformers_openai.main \
@@ -267,7 +267,7 @@ data: {"id": "20e9d233-6f6c-4dc4-95a9-7dcf077e9b57", "choices": [{"delta": {"con
 
 ### Run Whisper
 
-#### Continous batching
+#### Continuous batching
 
 ```bash
 python3.10 -m transformers_openai.main \
@@ -282,7 +282,7 @@ python3.10 -m transformers_openai.main \
 --hf-model openai/whisper-large-v3
 ```
 
-#### Non-continous batching
+#### Non-continuous batching
 
 ```bash
 python3 -m transformers_openai.main \
@@ -405,34 +405,34 @@ WARNING:root:Cancelling ae6af2a2-c1a3-4e5f-a9cf-eb1cf645870e due to disconnect
 
 Rate of 5 users per second, total requests up to 50 users for 30 seconds on shared RTX 3090 Ti,
 
-#### Non-continous batch
+#### Non-continuous batch
 
-![alt text](stress-test/t5_without_continous.png)
+![alt text](stress-test/t5_without_continuous.png)
 
-#### Continous batch
+#### Continuous batch
 
-![alt text](stress-test/t5_continous.png)
+![alt text](stress-test/t5_continuous.png)
 
 ### Mistral 7B GPTQ
 
 Rate of 5 users per second, total requests up to 50 users for 60 seconds on shared RTX 3090 Ti,
 
-#### Non-continous batch
+#### Non-continuous batch
 
-![alt text](stress-test/mistral_7b_gtpq_without_continous.png)
+![alt text](stress-test/mistral_7b_gtpq_without_continuous.png)
 
-#### Continous batch
+#### Continuous batch
 
-![alt text](stress-test/mistral_7b_gtpq_continous.png)
+![alt text](stress-test/mistral_7b_gtpq_continuous.png)
 
 ### Whisper Large V3
 
 Rate of 5 users per second, total requests up to 30 users for 60 seconds on shared RTX 3090 Ti,
 
-#### Non-continous batch
+#### Non-continuous batch
 
-![alt text](stress-test/whisper_without_continous.png)
+![alt text](stress-test/whisper_without_continuous.png)
 
-#### Continous batch
+#### Continuous batch
 
-![alt text](stress-test/whisper_continous.png)
+![alt text](stress-test/whisper_continuous.png)

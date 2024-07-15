@@ -15,7 +15,7 @@ python3 -m transformers_openai.main \
 --model-type transformers_openai.models.T5ForConditionalGeneration \
 --tokenizer-type AutoTokenizer --tokenizer-use-fast false \
 --architecture-type encoder-decoder --torch-dtype bfloat16 \
---cache-type none --continous-batching true --hf-model google/flan-t5-base
+--cache-type none --continuous-batching true --hf-model google/flan-t5-base
 """
 
 questions = [

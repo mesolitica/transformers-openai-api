@@ -54,8 +54,8 @@ class InsertMiddleware:
 
             scope['cache'] = getattr(cache_utils, args.cache_type, None)
             if scope['cache'] is not None:
-                if args.continous_batching:
-                    logging.warning('continous batching is enable, will ignore `CACHE_TYPE`.')
+                if args.continuous_batching:
+                    logging.warning('contiunous batching is enable, will ignore `CACHE_TYPE`.')
                     scope['cache'] = None
                 else:
                     scope['cache'] = scope['cache']()
@@ -184,7 +184,7 @@ if args.serving_type == 'whisper':
         else:
             return r
 
-if args.continous_batching:
+if args.continuous_batching:
     @app.on_event("startup")
     async def startup_event():
         app.state.background_prefill = asyncio.create_task(prefill())

@@ -87,19 +87,19 @@ def parse_arguments():
         help='Cache type (default: %(default)s, env: CACHE_TYPE)'
     )
     parser.add_argument(
-        '--continous-batching', type=lambda x: x.lower() == 'true',
-        default=os.environ.get('CONTINOUS_BATCHING', 'false').lower() == 'true',
-        help='Enable continous batching (default: %(default)s, env: CONTINOUS_BATCHING)'
+        '--continuous-batching', type=lambda x: x.lower() == 'true',
+        default=os.environ.get('CONTINUOUS_BATCHING', 'false').lower() == 'true',
+        help='Enable continuous batching (default: %(default)s, env: CONTINUOUS_BATCHING)'
     )
     parser.add_argument(
-        '--continous-batching-microsleep', type=float,
-        default=float(os.environ.get('CONTINOUS_BATCHING_MICROSLEEP', '1e-4')),
-        help='microsleep to group continous batching, 1 / 1e-3 = 1k steps for second (default: %(default)s, env: CONTINOUS_BATCHING_MICROSLEEP)'
+        '--continuous-batching-microsleep', type=float,
+        default=float(os.environ.get('CONTINUOUS_BATCHING_MICROSLEEP', '1e-4')),
+        help='microsleep to group continuous batching, 1 / 1e-3 = 1k steps for second (default: %(default)s, env: CONTINUOUS_BATCHING_MICROSLEEP)'
     )
     parser.add_argument(
-        '--continous-batching-batch-size', type=float,
-        default=int(os.environ.get('CONTINOUS_BATCHING_BATCH_SIZE', '20')),
-        help='maximum of batch size during continous batching (default: %(default)s, env: CONTINOUS_BATCHING_BATCH_SIZE)'
+        '--continuous-batching-batch-size', type=float,
+        default=int(os.environ.get('CONTINUOUS_BATCHING_BATCH_SIZE', '20')),
+        help='maximum of batch size during continuous batching (default: %(default)s, env: CONTINUOUS_BATCHING_BATCH_SIZE)'
     )
     parser.add_argument(
         '--accelerator-type', default=os.environ.get('ACCELERATOR_TYPE', 'cuda'),

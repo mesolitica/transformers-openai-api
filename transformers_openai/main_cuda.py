@@ -33,14 +33,14 @@ step_queue = asyncio.Queue()
 
 async def prefill():
     while True:
-        await asyncio.sleep(args.continous_batching_microsleep)
+        await asyncio.sleep(args.continuous_batching_microsleep)
         try:
             batch = []
             while not prefill_queue.empty():
                 try:
                     request = await asyncio.wait_for(prefill_queue.get(), timeout=1e-4)
                     batch.append(request)
-                    if len(batch) >= args.continous_batching_batch_size:
+                    if len(batch) >= args.continuous_batching_batch_size:
                         break
                 except asyncio.TimeoutError:
                     break
@@ -125,14 +125,14 @@ async def prefill():
 
 async def step():
     while True:
-        await asyncio.sleep(args.continous_batching_microsleep)
+        await asyncio.sleep(args.continuous_batching_microsleep)
         try:
             batch = []
             while not step_queue.empty():
                 try:
                     request = await asyncio.wait_for(step_queue.get(), timeout=1e-4)
                     batch.append(request)
-                    if len(batch) >= args.continous_batching_batch_size:
+                    if len(batch) >= args.continuous_batching_batch_size:
                         break
                 except asyncio.TimeoutError:
                     break
@@ -283,7 +283,7 @@ async def stream(inputs, id, created, form, request):
 
     with torch.no_grad():
 
-        if args.architecture_type == 'encoder-decoder' and not args.continous_batching:
+        if args.architecture_type == 'encoder-decoder' and not args.continuous_batching:
             out_encoder = model.encoder(inputs, return_dict=False)
             out_encoder = out_encoder
             inputs = torch.tensor([[model.config.decoder_start_token_id]], device='cuda')
@@ -295,7 +295,7 @@ async def stream(inputs, id, created, form, request):
             for k in range(form.max_tokens):
 
                 if args.architecture_type == 'encoder-decoder':
-                    if args.continous_batching:
+                    if args.continuous_batching:
 
                         if k == 0:
                             q = prefill_queue
@@ -317,7 +317,7 @@ async def stream(inputs, id, created, form, request):
                         )
 
                 else:
-                    if args.continous_batching:
+                    if args.continuous_batching:
                         if k == 0:
                             q = prefill_queue
                         else:

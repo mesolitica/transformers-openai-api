@@ -16,9 +16,9 @@ python3.10 -m transformers_openai.main \
 --model-type transformers_openai.models.WhisperForConditionalGeneration \
 --processor-type AutoProcessor \
 --serving-type whisper --torch-dtype bfloat16 --cache-type none \
---continous-batching true \
+--continuous-batching true \
 --hf-model openai/whisper-large-v3 \
---continous-batching-batch-size 10
+--continuous-batching-batch-size 10
 # can increase batch size, i got OOM
 """
 

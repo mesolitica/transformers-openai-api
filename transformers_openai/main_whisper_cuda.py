@@ -56,14 +56,14 @@ def load_model():
 
 async def prefill():
     while True:
-        await asyncio.sleep(args.continous_batching_microsleep)
+        await asyncio.sleep(args.continuous_batching_microsleep)
         try:
             batch = []
             while not prefill_queue.empty():
                 try:
                     request = await asyncio.wait_for(prefill_queue.get(), timeout=1e-4)
                     batch.append(request)
-                    if len(batch) >= args.continous_batching_batch_size:
+                    if len(batch) >= args.continuous_batching_batch_size:
                         break
                 except asyncio.TimeoutError:
                     break
@@ -164,14 +164,14 @@ async def prefill():
 
 async def step():
     while True:
-        await asyncio.sleep(args.continous_batching_microsleep)
+        await asyncio.sleep(args.continuous_batching_microsleep)
         try:
             batch = []
             while not step_queue.empty():
                 try:
                     request = await asyncio.wait_for(step_queue.get(), timeout=1e-4)
                     batch.append(request)
-                    if len(batch) >= args.continous_batching_batch_size:
+                    if len(batch) >= args.continuous_batching_batch_size:
                         break
                 except asyncio.TimeoutError:
                     break
@@ -303,7 +303,7 @@ async def generate(
             model.device)
         inputs = inputs['input_features'].type(model.dtype)
 
-        if not args.continous_batching:
+        if not args.continuous_batching:
 
             out_encoder = model.model.encoder(inputs)
             out_encoder = out_encoder[0]
@@ -336,7 +336,7 @@ async def generate(
 
         # minus 4 because ['<|startoftranscript|>', lang token, '<|transcribe|>', '<|0.0|>'] tokens
         for k in range(model.config.max_length - 4):
-            if args.continous_batching:
+            if args.continuous_batching:
                 if k == 0:
                     q = prefill_queue
                 else:
