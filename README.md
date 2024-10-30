@@ -1,6 +1,6 @@
 # transformers-openai-api
 
-Lightweight continuous batching OpenAI compatibility using HuggingFace Transformers.
+Lightweight continous batching OpenAI compatibility using HuggingFace Transformers include T5 and Whisper.
 
 1. Streaming token.
 2. Can serve user defined max concurrency.
