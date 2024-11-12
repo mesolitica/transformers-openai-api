@@ -1,7 +1,7 @@
 import argparse
 import logging
 import os
-
+import torch
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Configuration parser')
@@ -20,16 +20,12 @@ def parse_arguments():
     )
     parser.add_argument(
         '--model-type',
-        default=os.environ.get(
-            'MODEL_TYPE',
-            'AutoModelForCausalLM'),
+        default=os.environ.get('MODEL_TYPE', 'AutoModelForCausalLM'),
         help='Model type (default: %(default)s, env: MODEL_TYPE)'
     )
     parser.add_argument(
         '--tokenizer-type',
-        default=os.environ.get(
-            'TOKENIZER_TYPE',
-            'AutoTokenizer'),
+        default=os.environ.get('TOKENIZER_TYPE', 'AutoTokenizer'),
         help='Tokenizer type (default: %(default)s, env: TOKENIZER_TYPE)'
     )
     parser.add_argument(
@@ -39,29 +35,13 @@ def parse_arguments():
     )
     parser.add_argument(
         '--processor-type',
-        default=os.environ.get(
-            'PROCESSOR_TYPE',
-            'AutoTokenizer'),
+        default=os.environ.get('PROCESSOR_TYPE', 'AutoTokenizer'),
         help='Processor type (default: %(default)s, env: PROCESSOR_TYPE)'
     )
     parser.add_argument(
         '--hf-model',
-        default=os.environ.get(
-            'HF_MODEL',
-            'mesolitica/malaysian-llama2-7b-32k-instructions'),
+        default=os.environ.get('HF_MODEL', 'mesolitica/malaysian-llama2-7b-32k-instructions'),
         help='Hugging Face model (default: %(default)s, env: HF_MODEL)'
-    )
-    parser.add_argument(
-        '--hotload', type=lambda x: x.lower() == 'true',
-        default=os.environ.get('HOTLOAD', 'true').lower() == 'true',
-        help='Enable hot loading (default: %(default)s, env: HOTLOAD)'
-    )
-    parser.add_argument(
-        '--attn-implementation',
-        default=os.environ.get(
-            'ATTN_IMPLEMENTATION',
-            'sdpa').lower(),
-        help='Attention implementation (default: %(default)s, env: ATTN_IMPLEMENTATION)'
     )
     parser.add_argument(
         '--torch-dtype', default=os.environ.get('TORCH_DTYPE', 'bfloat16'),
@@ -69,10 +49,7 @@ def parse_arguments():
     )
     parser.add_argument(
         '--architecture-type',
-        default=os.environ.get(
-            'ARCHITECTURE_TYPE',
-            'decoder'
-        ),
+        default=os.environ.get('ARCHITECTURE_TYPE', 'decoder'),
         choices=['decoder', 'encoder-decoder'],
         help='Architecture type (default: %(default)s, env: ARCHITECTURE_TYPE)'
     )
@@ -83,18 +60,9 @@ def parse_arguments():
         help='Serving type (default: %(default)s, env: SERVING_TYPE)'
     )
     parser.add_argument(
-        '--cache-type', default=os.environ.get('CACHE_TYPE', 'DynamicCache'),
-        help='Cache type (default: %(default)s, env: CACHE_TYPE)'
-    )
-    parser.add_argument(
-        '--continuous-batching', type=lambda x: x.lower() == 'true',
-        default=os.environ.get('CONTINUOUS_BATCHING', 'false').lower() == 'true',
-        help='Enable continuous batching (default: %(default)s, env: CONTINUOUS_BATCHING)'
-    )
-    parser.add_argument(
         '--continuous-batching-microsleep', type=float,
-        default=float(os.environ.get('CONTINUOUS_BATCHING_MICROSLEEP', '1e-4')),
-        help='microsleep to group continuous batching, 1 / 1e-3 = 1k steps for second (default: %(default)s, env: CONTINUOUS_BATCHING_MICROSLEEP)'
+        default=float(os.environ.get('CONTINUOUS_BATCHING_MICROSLEEP', '1e-3')),
+        help='microsleep to group continuous batching, 1 / 1e-3 = 1k steps for one second (default: %(default)s, env: CONTINUOUS_BATCHING_MICROSLEEP)'
     )
     parser.add_argument(
         '--continuous-batching-batch-size', type=float,
@@ -108,25 +76,8 @@ def parse_arguments():
     parser.add_argument(
         '--max-concurrent',
         type=int,
-        default=int(
-            os.environ.get(
-                'MAX_CONCURRENT',
-                '100')),
+        default=int(os.environ.get('MAX_CONCURRENT', '100')),
         help='Maximum concurrent requests (default: %(default)s, env: MAX_CONCURRENT)'
-    )
-
-    parser.add_argument(
-        '--neuronx-n-positions',
-        type=int,
-        default=int(
-            os.environ.get(
-                'NEURONX_N_POSITIONS',
-                '2048')),
-        help='NeuronX number of positions (default: %(default)s, env: N_POSITIONS)'
-    )
-    parser.add_argument(
-        '--neuronx-batch-size', type=int, default=int(os.environ.get('NEURONX_BATCH_SIZE', '1')),
-        help='NeuronX batch size (default: %(default)s, env: BATCH_SIZE)'
     )
 
     args = parser.parse_args()
@@ -134,6 +85,14 @@ def parse_arguments():
     if args.hf_model is None:
         raise ValueError('must set `--hf-model` or `HF_MODEL` environment variable.')
 
+    device = 'cpu'
+    if args.accelerator_type == 'cuda':
+        if not torch.cuda.is_available():
+            logging.warning('CUDA is not available, fallback to CPU.')
+        else:
+            device = 'cuda'
+
+    args.device = device
     return args
 
 

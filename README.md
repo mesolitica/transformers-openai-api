@@ -4,12 +4,11 @@ Lightweight continuous batching OpenAI compatibility using HuggingFace Transform
 
 1. Streaming token.
 2. Can serve user defined max concurrency.
-3. Each request got it's own KV Cache using Transformers Cache.
-4. Disconnected signal, so this is to ensure early stop.
-5. Properly cleanup KV Cache after each requests.
-6. Support Encoder-Decoder like T5.
-7. Continuous batching for better throughput, support both Encoder-Decoder and Decoder.
-8. Support Audio Transcriptions with streaming token using Whisper.
+3. Disconnected signal, so this is to ensure early stop.
+4. Properly cleanup KV Cache after each requests.
+5. Support Encoder-Decoder T5.
+6. Continuous batching for better throughput, support both Encoder-Decoder and Decoder.
+7. Support Audio Transcriptions with streaming token using Whisper.
 
 ## how to install
 
@@ -91,19 +90,9 @@ optional arguments:
 
 ### Run Decoder
 
-#### Continuous batching
-
 ```
-python3 -m transformers_openai.main \
---host 0.0.0.0 --port 7088 --hf-model mesolitica/malaysian-tinyllama-1.1b-16k-instructions-v4 \
---continous-batching true
-```
-
-#### Non-continuous batching
-
-```bash
-python3 -m transformers_openai.main \
---host 0.0.0.0 --port 7088 --hf-model mesolitica/malaysian-tinyllama-1.1b-16k-instructions-v4
+CUDA_VISIBLE_DEVICES=2 python3.10 -m transformers_openai.main \
+--host 0.0.0.0 --port 7088 --hf-model meta-llama/Llama-3.2-1B-Instruct
 ```
 
 #### Example OpenAI library
@@ -125,14 +114,13 @@ response = client.chat.completions.create(
     temperature=0.1,
     max_tokens=1024,
     top_p=0.95,
-    stop=['[/INST]', '[INST]', '<s>'],
 )
 ```
 
 Output,
 
 ```
-ChatCompletion(id='c8695dd2-5ab8-4064-9bd5-c5d666324aa3', choices=[Choice(finish_reason='stop', index=0, logprobs=None, message=ChatCompletionMessage(content='helo! Bagaimana saya boleh membantu anda hari ini?', role='assistant', function_call=None, tool_calls=None), stop_reason=None)], created=1714235932, model='model', object='chat.completion', system_fingerprint=None, usage=CompletionUsage(completion_tokens=0, prompt_tokens=0, total_tokens=0))
+ChatCompletion(id='dc76683b-5449-4a5f-93ef-cc1e24a7e4cc', choices=[Choice(finish_reason='stop', index=0, logprobs=None, message=ChatCompletionMessage(content='<|start_header_id|>assistant<|end_header_id|>\n\nHello. Is there something I can help you with or would you like to chat?', role='assistant', function_call=None, tool_calls=None), stop_reason=None)], created=1731378454, model='model', object='chat.completion', service_tier=None, system_fingerprint=None, usage=CompletionUsage(completion_tokens=21, prompt_tokens=32, total_tokens=53))
 ```
 
 Recorded streaming,
@@ -141,8 +129,6 @@ https://github.com/mesolitica/transformers-openai-api/assets/19810909/5a8c873b-2
 
 ### Run Encoder-Decoder
 
-#### Continuous batching
-
 ```bash
 python3 -m transformers_openai.main \
 --host 0.0.0.0 --port 7088 \
@@ -151,24 +137,6 @@ python3 -m transformers_openai.main \
 --tokenizer-type AutoTokenizer \
 --tokenizer-use-fast false \
 --architecture-type encoder-decoder \
---torch-dtype bfloat16 \
---cache-type none \
---continous-batching true \
---hf-model google/flan-t5-base
-```
-
-#### Non-continuous batching
-
-```bash
-python3 -m transformers_openai.main \
---host 0.0.0.0 --port 7088 \
---attn-implementation sdpa \
---model-type transformers_openai.models.T5ForConditionalGeneration \
---tokenizer-type AutoTokenizer \
---tokenizer-use-fast false \
---architecture-type encoder-decoder \
---torch-dtype bfloat16 \
---cache-type none \
 --hf-model google/flan-t5-base
 ```
 
@@ -265,32 +233,12 @@ data: {"id": "20e9d233-6f6c-4dc4-95a9-7dcf077e9b57", "choices": [{"delta": {"con
 
 ### Run Whisper
 
-#### Continuous batching
-
 ```bash
 python3.10 -m transformers_openai.main \
 --host 0.0.0.0 --port 7088 \
---attn-implementation sdpa \
 --model-type transformers_openai.models.WhisperForConditionalGeneration \
 --processor-type AutoProcessor \
 --serving-type whisper \
---torch-dtype bfloat16 \
---cache-type none \
---continous-batching true \
---hf-model openai/whisper-large-v3
-```
-
-#### Non-continuous batching
-
-```bash
-python3 -m transformers_openai.main \
---host 0.0.0.0 --port 7088 \
---attn-implementation sdpa \
---model-type WhisperForConditionalGeneration \
---processor-type AutoProcessor \
---serving-type whisper \
---torch-dtype bfloat16 \
---cache-type none \
 --hf-model openai/whisper-large-v3
 ```
 
@@ -403,33 +351,17 @@ WARNING:root:Cancelling ae6af2a2-c1a3-4e5f-a9cf-eb1cf645870e due to disconnect
 
 Rate of 5 users per second, total requests up to 50 users for 30 seconds on shared RTX 3090 Ti,
 
-#### Non-continuous batch
+![alt text](stress-test/t5.png)
 
-![alt text](stress-test/t5_without_continuous.png)
-
-#### Continuous batch
-
-![alt text](stress-test/t5_continuous.png)
-
-### Mistral 7B GPTQ
+### Llama 3.2 1B Instruct
 
 Rate of 5 users per second, total requests up to 50 users for 60 seconds on shared RTX 3090 Ti,
-
-#### Non-continuous batch
-
-![alt text](stress-test/mistral_7b_gtpq_without_continuous.png)
-
-#### Continuous batch
 
 ![alt text](stress-test/mistral_7b_gtpq_continuous.png)
 
 ### Whisper Large V3
 
 Rate of 5 users per second, total requests up to 30 users for 60 seconds on shared RTX 3090 Ti,
-
-#### Non-continuous batch
-
-![alt text](stress-test/whisper_without_continuous.png)
 
 #### Continuous batch
 

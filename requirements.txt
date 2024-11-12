@@ -6,7 +6,6 @@ evaluate
 scipy
 sse_starlette
 fastapi
-sse-starlette
 uvicorn
 hf-transfer
 sentencepiece

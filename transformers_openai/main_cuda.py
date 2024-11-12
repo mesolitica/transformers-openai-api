@@ -1,12 +1,14 @@
 from transformers_openai.env import args
 from transformers_openai.function import (
     sample,
-    decode,
-    load_hf_tokenizer,
-    load_hf_model,
     pad_attention_mask,
     pad_hidden_encoder,
     efficient_attention_mask,
+)
+from transformers_openai.function_hf import (
+    load_hf_tokenizer,
+    load_hf_model,
+    decode,
 )
 from transformers_openai.base_model import ChatCompletionForm
 from transformers_openai.cache import (
@@ -15,33 +17,54 @@ from transformers_openai.cache import (
 )
 from fastapi import Request
 from sse_starlette import ServerSentEvent
-
 from datetime import datetime
 import asyncio
 import time
 import logging
 import torch
 import json
-
+import os, sys
+import traceback
 
 model = None
 tokenizer = None
+global_cache = None
+
+torch_dtype = getattr(torch, args.torch_dtype)
+device = args.device
 
 prefill_queue = asyncio.Queue()
 step_queue = asyncio.Queue()
 
+def load_model():
+    global model, tokenizer, global_cache
+
+    model = load_hf_model()
+    tokenizer = load_hf_tokenizer()
+
+    if args.architecture_type == 'encoder-decoder':
+        global_cache = DynamicLengthEncoderDecoderCache()
+    else:
+        global_cache = DynamicLengthDecoderCache()
+
 
 async def prefill():
+    need_sleep = True
     while True:
-        await asyncio.sleep(args.continuous_batching_microsleep)
+        if need_sleep:
+            await asyncio.sleep(args.continuous_batching_microsleep)
+        
         try:
+            need_sleep = True
             batch = []
             while not prefill_queue.empty():
                 try:
-                    request = await asyncio.wait_for(prefill_queue.get(), timeout=1e-4)
+                    request = await asyncio.wait_for(prefill_queue.get(), timeout=1e-6)
                     batch.append(request)
                     if len(batch) >= args.continuous_batching_batch_size:
+                        need_sleep = False
                         break
+
                 except asyncio.TimeoutError:
                     break
 
@@ -52,63 +75,76 @@ async def prefill():
 
             futures = [batch[i][0] for i in range(len(batch))]
             inputs = [batch[i][1] for i in range(len(batch))]
-            lengths = [batch[i][4] for i in range(len(batch))]
+            lengths = [batch[i][3] for i in range(len(batch))]
+            uuids = [batch[i][4] for i in range(len(batch))]
 
             max_len = max(lengths)
 
-            inputs = [{'input_ids': inputs[i][0]} for i in range(len(inputs))]
-            input_ids = tokenizer.pad(inputs, padding=True, return_tensors='pt').to('cuda')
+            with torch.no_grad():
+                inputs = [{'input_ids': inputs[i][0]} for i in range(len(inputs))]
+                input_ids = tokenizer.pad(inputs, padding=True, return_tensors='pt').to(device)
 
-            if args.architecture_type == 'encoder-decoder':
-                out_encoder = model.encoder(**input_ids, return_dict=False)
-                inputs = torch.tensor([[model.config.decoder_start_token_id]]
-                                      * len(batch), device='cuda')
-                out = model(
-                    attention_mask=input_ids['attention_mask'],
-                    decoder_input_ids=inputs,
-                    encoder_outputs=out_encoder,
-                    past_key_values=None,
-                    use_cache=True,
-                    return_dict=False
-                )
-                out_encoder = out_encoder[0]
-            else:
-                out = model(
-                    **input_ids,
-                    past_key_values=None,
-                    use_cache=True,
-                    return_dict=False
-                )
+                if args.architecture_type == 'encoder-decoder':
+                    out_encoder = model.encoder(**input_ids, return_dict=False)
+                    inputs = torch.tensor([[model.config.decoder_start_token_id]] * len(batch), device=device)
+                    out = model(
+                        attention_mask=input_ids['attention_mask'],
+                        decoder_input_ids=inputs,
+                        encoder_outputs=out_encoder,
+                        past_key_values=None,
+                        use_cache=True,
+                        return_dict=False
+                    )
+                    out_encoder = out_encoder[0]
+                else:
+                    out = model(
+                        **input_ids,
+                        past_key_values=None,
+                        use_cache=True,
+                        return_dict=False
+                    )
 
-            out_logits = out[0]
-            out_caches = out[1]
+                out_logits = out[0]
+                out_caches = out[1]
 
-            caches = []
-            for i in range(len(batch)):
-                cache = []
-                for k in range(len(out_caches)):
-                    cache_ = [
-                        out_caches[k][0][i:i + 1, :, :lengths[i]],
-                        out_caches[k][1][i:i + 1, :, :lengths[i]],
-                    ]
+            cache_exists = len(global_cache.key_cache)
+
+            for k in range(len(out_caches)):
+                key_cache = {}
+                value_cache = {}
+                cross_key_cache = {}
+                cross_value_cache = {}
+                for i in range(len(batch)):
+                    key_cache[uuids[i]] = out_caches[k][0][i: i + 1, :, :lengths[i]]
+                    value_cache[uuids[i]] = out_caches[k][1][i: i + 1, :, :lengths[i]]
                     if args.architecture_type == 'encoder-decoder':
-                        cache_.extend([
-                            out_caches[k][2][i:i + 1, :, :lengths[i]],
-                            out_caches[k][3][i:i + 1, :, :lengths[i]]
-                        ])
-                    cache.append(cache_)
-                caches.append(cache)
+                        cross_key_cache[uuids[i]] = out_caches[k][2][i: i + 1, :, :lengths[i]]
+                        cross_value_cache[uuids[i]] = out_caches[k][3][i: i + 1, :, :lengths[i]]
+
+                if cache_exists:
+                    global_cache.key_cache[k].update(key_cache)
+                    global_cache.value_cache[k].update(value_cache)
+                    if args.architecture_type == 'encoder-decoder':
+                        global_cache.cross_key_cache[k].update(cross_key_cache)
+                        global_cache.cross_value_cache[k].update(cross_value_cache)
+                else:
+                    global_cache.key_cache.append(key_cache)
+                    global_cache.value_cache.append(value_cache)
+                    if args.architecture_type == 'encoder-decoder':
+                        global_cache.cross_key_cache.append(cross_key_cache)
+                        global_cache.cross_value_cache.append(cross_value_cache)
 
             if args.architecture_type == 'encoder-decoder':
                 last = []
                 for i in range(len(batch)):
-                    last.append((input_ids['attention_mask'][i:i + 1,
-                                :lengths[i]], out_encoder[i:i + 1, :lengths[i]]))
+                    last.append((
+                        input_ids['attention_mask'][i:i + 1, :lengths[i]], 
+                        out_encoder[i:i + 1, :lengths[i]]))
             else:
                 last = [None] * len(batch)
 
             for i in range(len(futures)):
-                futures[i].set_result((out_logits[i: i + 1, -1:], caches[i], last[i]))
+                futures[i].set_result((out_logits[i: i + 1, -1:], last[i]))
 
             for k in range(len(out_caches)):
                 temp = list(out_caches[k])
@@ -124,15 +160,20 @@ async def prefill():
 
 
 async def step():
+    need_sleep = True
     while True:
-        await asyncio.sleep(args.continuous_batching_microsleep)
+        if need_sleep:
+            await asyncio.sleep(args.continuous_batching_microsleep)
+
         try:
+            need_sleep = True
             batch = []
             while not step_queue.empty():
                 try:
-                    request = await asyncio.wait_for(step_queue.get(), timeout=1e-4)
+                    request = await asyncio.wait_for(step_queue.get(), timeout=1e-6)
                     batch.append(request)
                     if len(batch) >= args.continuous_batching_batch_size:
+                        need_sleep = False
                         break
                 except asyncio.TimeoutError:
                     break
@@ -145,110 +186,52 @@ async def step():
             futures = [batch[i][0] for i in range(len(batch))]
             inputs = [batch[i][1] for i in range(len(batch))]
             out_encoders = [batch[i][2] for i in range(len(batch))]
-            caches = [batch[i][3] for i in range(len(batch))]
-            lengths = [batch[i][4] for i in range(len(batch))]
+            lengths = [batch[i][3] for i in range(len(batch))]
+            uuids = [batch[i][4] for i in range(len(batch))]
 
-            cache_dtype = caches[0][0][0].dtype
-            cache_device = caches[0][0][0].device
-
-            kv_len = [caches[i][0][0].shape[2] for i in range(len(batch))]
-            max_len = max(kv_len)
+            global_cache.current_uuid = uuids
             max_len_lengths = max(lengths)
 
-            if args.architecture_type == 'encoder-decoder':
-                cache = DynamicLengthEncoderDecoderCache
-            else:
-                cache = DynamicLengthDecoderCache
-
-            cache = cache(lengths=lengths)
-
-            len_cache = len(caches[0])
-            len_kv = len(caches[0][0])
-
-            for n in range(len_cache):
-
-                key_cache = []
-                value_cache = []
-                for i in range(len(batch)):
-                    key_cache.append(caches[i][n][0])
-                    value_cache.append(caches[i][n][1])
-
-                cache.key_cache.append(key_cache)
-                cache.value_cache.append(value_cache)
+            with torch.no_grad():
+                inputs = torch.concat(inputs, dim=0)
+                attention_mask = efficient_attention_mask(
+                    batch_size=len(lengths),
+                    max_len=max_len_lengths,
+                    lengths=lengths,
+                    device=device,
+                    dtype=torch_dtype,
+                    ones=args.architecture_type == 'encoder-decoder'
+                )
 
                 if args.architecture_type == 'encoder-decoder':
+                    encoder_attention_mask = [out_encoders[i][0] for i in range(len(out_encoders))]
+                    out_encoder = [out_encoders[i][1] for i in range(len(out_encoders))]
+                    encoder_attention_mask = pad_attention_mask(encoder_attention_mask)
+                    out_encoder = pad_hidden_encoder(out_encoder)
+                    out = model(
+                        attention_mask=encoder_attention_mask,
+                        decoder_attention_mask=attention_mask[:, 0],
+                        decoder_input_ids=inputs,
+                        encoder_outputs=(out_encoder,),
+                        past_key_values=global_cache,
+                        use_cache=True,
+                        return_dict=False
+                    )
+                else:
+                    position_ids = torch.tensor([[l - 1 for l in lengths]]).T.to(device)
+                    out = model(
+                        inputs,
+                        attention_mask=attention_mask,
+                        position_ids=position_ids,
+                        past_key_values=global_cache,
+                        use_cache=True,
+                        return_dict=False
+                    )
 
-                    key_cache = []
-                    value_cache = []
-                    for i in range(len(batch)):
-                        key_cache.append(caches[i][n][2])
-                        value_cache.append(caches[i][n][3])
-
-                    cache.cross_key_cache.append(key_cache)
-                    cache.cross_value_cache.append(value_cache)
-
-            inputs = torch.concat(inputs, dim=0)
-            attention_mask = efficient_attention_mask(
-                batch_size=len(lengths),
-                max_len=max_len_lengths,
-                lengths=lengths,
-                device=cache_device,
-                dtype=cache_dtype,
-                ones=args.architecture_type == 'encoder-decoder'
-            )
-
-            if args.architecture_type == 'encoder-decoder':
-
-                encoder_attention_mask = [out_encoders[i][0] for i in range(len(out_encoders))]
-                out_encoder = [out_encoders[i][1] for i in range(len(out_encoders))]
-
-                encoder_attention_mask = pad_attention_mask(encoder_attention_mask)
-                out_encoder = pad_hidden_encoder(out_encoder)
-
-                out = model(
-                    attention_mask=encoder_attention_mask,
-                    decoder_attention_mask=attention_mask[:, 0],
-                    decoder_input_ids=inputs,
-                    encoder_outputs=(out_encoder,),
-                    past_key_values=cache,
-                    use_cache=True,
-                    return_dict=False
-                )
-            else:
-                position_ids = torch.tensor([[l - 1 for l in lengths]]).T.to(cache_device)
-
-                out = model(
-                    inputs,
-                    attention_mask=attention_mask,
-                    position_ids=position_ids,
-                    past_key_values=cache,
-                    use_cache=True,
-                    return_dict=False
-                )
-
-            out_logits = out[0]
-
-            caches = []
-            for i in range(len(batch)):
-                new_cache = []
-                for k in range(len(cache)):
-                    keys = cache.key_cache[k]
-                    values = cache.value_cache[k]
-                    v = [keys[i], values[i]]
-                    if args.architecture_type == 'encoder-decoder':
-                        keys = cache.cross_key_cache[k]
-                        values = cache.cross_value_cache[k]
-                        v.extend([keys[i], values[i]])
-                    new_cache.append(v)
-                caches.append(new_cache)
+                out_logits = out[0]
 
             for i in range(len(futures)):
-                futures[i].set_result((out_logits[i: i + 1, -1:], caches[i]))
-
-            for k in range(len(cache)):
-                temp = list(cache[k])
-                for j in range(len(temp)):
-                    del temp[0]
+                futures[i].set_result((out_logits[i: i + 1, -1:],))
 
         except Exception as e:
             print(f"Error in step: {e}")
@@ -256,12 +239,6 @@ async def step():
             for i in range(len(futures)):
                 if not futures[i].done():
                     futures[i].set_exception(e)
-
-
-def load_model():
-    global model, tokenizer
-    model = load_hf_model()
-    tokenizer = load_hf_tokenizer()
 
 
 async def stream(inputs, id, created, form, request):
@@ -274,138 +251,111 @@ async def stream(inputs, id, created, form, request):
             terminators.append(t)
         replace_tokens.append(s)
 
-    cache = request.scope['cache']
-    cache_is_none = cache is None
-
     mask_penalty = torch.ones((len(inputs), model.config.vocab_size)).cuda()
 
     initial_length = inputs.shape[1]
+    uuid = request.scope['request']['uuid']
+    out_encoder = None
 
-    with torch.no_grad():
-
-        if args.architecture_type == 'encoder-decoder' and not args.continuous_batching:
-            out_encoder = model.encoder(inputs, return_dict=False)
-            out_encoder = out_encoder
-            inputs = torch.tensor([[model.config.decoder_start_token_id]], device='cuda')
-        else:
-            out_encoder = None
-
-        try:
-
-            for k in range(form.max_tokens):
-
-                if args.architecture_type == 'encoder-decoder':
-                    if args.continuous_batching:
-
-                        if k == 0:
-                            q = prefill_queue
-                            l = initial_length
-                        else:
-                            q = step_queue
-                            l = k + 1
-
-                        future = asyncio.Future()
-                        await q.put((future, inputs, out_encoder, cache, l))
-                        out = await future
-                    else:
-                        out = model(
-                            decoder_input_ids=inputs,
-                            encoder_outputs=out_encoder,
-                            past_key_values=cache,
-                            use_cache=True,
-                            return_dict=False
-                        )
-
-                else:
-                    if args.continuous_batching:
-                        if k == 0:
-                            q = prefill_queue
-                        else:
-                            q = step_queue
-
-                        future = asyncio.Future()
-                        await q.put((future, inputs, None, cache, k + initial_length))
-                        out = await future
-                    else:
-                        out = model(
-                            inputs,
-                            past_key_values=cache,
-                            use_cache=True,
-                            return_dict=False
-                        )
-
-                logits = out[0]
-                if cache_is_none:
-                    cache = out[1]
-                    request.scope['cache'] = cache
-
-                if args.architecture_type == 'encoder-decoder' and out_encoder is None:
-                    out_encoder = out[2]
-
-                idx_next, probs = sample(
-                    logits,
-                    mask_penalty,
-                    temperature=form.temperature,
-                    top_k=form.top_k,
-                    top_p=form.top_p
-                )
-
-                mask_penalty[0, idx_next[0]] = form.repetition_penalty
-                token = decode(tokenizer, idx_next)
-
+    try:
+        for k in range(form.max_tokens):
+            if args.architecture_type == 'encoder-decoder':
                 if k == 0:
-                    request.scope['request']['time_first_token'] = time.time()
+                    l = initial_length
+                else:
+                    l = k + 1
+            else:
+                l = k + initial_length
 
-                for t in replace_tokens:
-                    token = token.replace(t, '')
+            if k == 0:
+                q = prefill_queue
+            else:
+                q = step_queue
 
-                ids = idx_next[0].tolist()
+            future = asyncio.Future()
+            await q.put((future, inputs, out_encoder, l, uuid))
+            out = await future
+            logits = out[0]
 
-                if ids == tokenizer.eos_token_id:
-                    break
+            if args.architecture_type == 'encoder-decoder' and out_encoder is None:
+                out_encoder = out[1]
 
-                if ids in terminators:
-                    break
+            idx_next, probs = sample(
+                logits,
+                mask_penalty,
+                temperature=form.temperature,
+                top_k=form.top_k,
+                top_p=form.top_p
+            )
 
-                del logits, probs, inputs
-                inputs = idx_next.unsqueeze(0)
+            mask_penalty[0, idx_next[0]] = form.repetition_penalty
+            token = decode(tokenizer, idx_next)
 
-                data = {
-                    'id': id,
-                    'choices': [
-                        {'delta': {
-                            'content': token,
-                            'function_call': None,
-                            'role': None,
-                            'tool_calls': None
-                        },
-                            'finish_reason': None,
-                            'index': 0,
-                            'logprobs': None
-                        }
-                    ],
-                    'created': created,
-                    'model': 'model',
-                    'object': 'chat.completion.chunk',
-                    'system_fingerprint': None
-                }
-                yield json.dumps(data)
-                await asyncio.sleep(0)
+            if k == 0:
+                request.scope['request']['time_first_token'] = time.time()
 
-            request.scope['request']['time_max_tokens'] = time.time()
-            request.scope['request']['total_tokens'] = k
+            for t in replace_tokens:
+                token = token.replace(t, '')
 
-        except asyncio.CancelledError as e:
-            logging.warning(f"model step cancelled {request.scope['request']['uuid']}")
-            yield ServerSentEvent(**{"data": str(e)})
+            ids = idx_next[0].tolist()
+
+            if ids == tokenizer.eos_token_id:
+                break
+
+            if ids in terminators:
+                break
+
+            del logits, probs, inputs
+            inputs = idx_next.unsqueeze(0)
+
+            data = {
+                'id': id,
+                'choices': [
+                    {'delta': {
+                        'content': token,
+                        'function_call': None,
+                        'role': None,
+                        'tool_calls': None
+                    },
+                        'finish_reason': None,
+                        'index': 0,
+                        'logprobs': None
+                    }
+                ],
+                'created': created,
+                'model': 'model',
+                'object': 'chat.completion.chunk',
+                'system_fingerprint': None
+            }
+            yield json.dumps(data)
+            await asyncio.sleep(0)
+
+        request.scope['request']['time_max_tokens'] = time.time()
+        request.scope['request']['total_tokens'] = k
+
+    except asyncio.CancelledError as e:
+        logging.warning(f"model step cancelled {uuid}")
+        yield ServerSentEvent(**{"data": str(e)})
+    
+    except Exception as e:
+        logging.error(f"model step exception {e} {uuid}")
+        yield ServerSentEvent(**{"data": str(e)})
+
+    finally:
+        logging.debug(f'purging {uuid} KV cache')
+        for i in range(len(global_cache.key_cache)):
+            global_cache.key_cache[i].pop(uuid, None)
+            global_cache.value_cache[i].pop(uuid, None)
+            if args.architecture_type == 'encoder-decoder':
+                global_cache.cross_key_cache[i].pop(uuid, None)
+                global_cache.cross_value_cache[i].pop(uuid, None)
+        torch.cuda.empty_cache()
 
 
 async def chat_completions(
     form: ChatCompletionForm,
     request: Request = None,
 ):
-    if model is None:
-        load_model()
 
     if tokenizer.chat_template is not None:
         prompt = tokenizer.apply_chat_template(form.messages, tokenize=False)
@@ -416,7 +366,7 @@ async def chat_completions(
         prompt,
         return_tensors='pt',
         add_special_tokens=False,
-    ).to('cuda')
+    ).to(device)
 
     id = request.scope['request']['uuid']
     created = int(time.time())

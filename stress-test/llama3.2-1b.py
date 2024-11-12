@@ -4,19 +4,14 @@ import itertools
 import gpustat
 import time
 
-gpu_stats = gpustat.GPUStatCollection.new_query()
-
 """
 Make sure already running this,
 
-CUDA_VISIBLE_DEVICES=0 HF_TRANSFER=1 \
+CUDA_VISIBLE_DEVICES=2 HF_TRANSFER=1 \
 python3.10 -m transformers_openai.main \
 --host 0.0.0.0 --port 7088 \
---hf-model TheBloke/Mistral-7B-Instruct-v0.2-GPTQ \
---torch-dtype float16 \
---hotload true \
---model-type auto_gptq.AutoGPTQForCausalLM \
---continuous-batching true
+--hf-model meta-llama/Llama-3.2-1B-Instruct \
+--torch-dtype bfloat16
 """
 
 questions = [

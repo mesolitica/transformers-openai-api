@@ -1,13 +1,6 @@
-from transformers_openai.env import args
 import torch
 import torch.nn.functional as F
-import logging
-import importlib
 from typing import Optional
-import transformers
-
-SPIECE_UNDERLINE = "▁"
-
 
 def efficient_attention_mask(batch_size, max_len, lengths, device, dtype, ones=True):
     lengths = torch.tensor(lengths)
@@ -42,58 +35,6 @@ def pad_hidden_encoder(out_encoder):
             (0, 0, 0, maxlen - out_encoder[i].shape[1], 0, 0)) for i in range(
             len(out_encoder))]
     return torch.concat(out_encoder)
-
-
-def load_hf_model():
-    if 't5' in args.model_type.lower() and 'sdpa' not in args.attn_implementation.lower():
-        logging.warning(
-            'you are using T5 without SDPA, might want to set `--attn-implementation sdpa --model-type transformers_openai.models.T5ForConditionalGeneration`')
-
-    if '.' in args.model_type:
-        module_name, class_name = args.model_type.rsplit('.', 1)
-        module = importlib.import_module(module_name)
-        class_ = getattr(module, class_name)
-
-    else:
-        class_ = getattr(transformers, args.model_type)
-
-    logging.info(f'loading {class_} {args.hf_model}')
-
-    if 'auto_gptq' in args.model_type:
-        return class_.from_quantized(args.hf_model)
-
-    else:
-        return class_.from_pretrained(
-            args.hf_model,
-            attn_implementation=args.attn_implementation,
-            torch_dtype=getattr(torch, args.torch_dtype),
-        ).cuda()
-
-
-def load_hf_processor():
-    processor = getattr(transformers, args.processor_type).from_pretrained(
-        args.hf_model,
-    )
-    return processor
-
-
-def load_hf_tokenizer():
-    tokenizer = getattr(transformers, args.tokenizer_type).from_pretrained(
-        args.hf_model,
-        use_fast=args.tokenizer_use_fast,
-    )
-    if tokenizer.pad_token_id is None:
-        tokenizer.pad_token_id = 0
-    return tokenizer
-
-
-def decode(tokenizer, ids):
-    tokens = tokenizer.convert_ids_to_tokens(ids)
-    if SPIECE_UNDERLINE in tokens[0]:
-        prefix = ' '
-    else:
-        prefix = ''
-    return prefix + tokenizer.convert_tokens_to_string(tokens)
 
 
 def multinomial_sample_one_no_sync(probs_sort):

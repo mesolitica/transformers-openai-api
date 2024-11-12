@@ -303,27 +303,7 @@ async def generate(
             model.device)
         inputs = inputs['input_features'].type(model.dtype)
 
-        if not args.continuous_batching:
-
-            out_encoder = model.model.encoder(inputs)
-            out_encoder = out_encoder[0]
-            if language is None:
-                labels = processor.tokenizer(
-                    '<|startoftranscript|>',
-                    add_special_tokens=False,
-                    return_tensors='pt',
-                ).to('cuda')['input_ids']
-                out_decoder = model.model.decoder(labels, encoder_hidden_states=out_encoder)
-                proj = model.proj_out(out_decoder.last_hidden_state[:, -1:])
-                lang = processor.tokenizer.decode(proj.argmax(-1)[0])
-                language = lang[2:-2]
-
-            lang_token = processor.tokenizer.encode(f'<|{language}|>', add_special_tokens=False)[0]
-            prompt_ids = [50258, lang_token, 50360, 50365]
-            inputs = torch.tensor([prompt_ids]).to('cuda')
-
-        else:
-            out_encoder = None
+        out_encoder = None
 
         texts = f'<|{language}|><|{last_timestamp}|>'
 
@@ -336,31 +316,14 @@ async def generate(
 
         # minus 4 because ['<|startoftranscript|>', lang token, '<|transcribe|>', '<|0.0|>'] tokens
         for k in range(model.config.max_length - 4):
-            if args.continuous_batching:
-                if k == 0:
-                    q = prefill_queue
-                else:
-                    q = step_queue
-
-                future = asyncio.Future()
-                await q.put((future, language, inputs, out_encoder, cache, k))
-                out = await future
+            if k == 0:
+                q = prefill_queue
             else:
-                if k > 0:
-                    position_ids = torch.tensor([[k + 3]]).cuda()
-                else:
-                    position_ids = None
-                out = model.model.decoder(
-                    inputs,
-                    encoder_hidden_states=out_encoder,
-                    past_key_values=cache,
-                    position_ids=position_ids,
-                    use_cache=True,
-                    return_dict=False,
-                )
-                out = list(out)
-                logits = model.proj_out(out[0][:, -1:])
-                out[0] = logits
+                q = step_queue
+
+            future = asyncio.Future()
+            await q.put((future, language, inputs, out_encoder, cache, k))
+            out = await future
 
             logits = out[0]
             cache = out[1]
