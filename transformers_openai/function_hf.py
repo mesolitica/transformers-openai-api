@@ -8,7 +8,6 @@ import torch
 SPIECE_UNDERLINE = "▁"
 
 def load_hf_model():
-    print('args.model_type', args.model_type)
     if 't5' in args.model_type.lower() and 'transformers_openai.models' not in args.model_type:
         raise Exception('We only support `--model-type transformers_openai.models.T5ForConditionalGeneration` for T5.')
 

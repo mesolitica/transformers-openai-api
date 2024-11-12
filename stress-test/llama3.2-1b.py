@@ -10,8 +10,7 @@ Make sure already running this,
 CUDA_VISIBLE_DEVICES=2 HF_TRANSFER=1 \
 python3.10 -m transformers_openai.main \
 --host 0.0.0.0 --port 7088 \
---hf-model meta-llama/Llama-3.2-1B-Instruct \
---torch-dtype bfloat16
+--hf-model meta-llama/Llama-3.2-1B-Instruct
 """
 
 questions = [

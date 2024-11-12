@@ -15,7 +15,7 @@ locust -f t5.py -P 7001 -H http://localhost:7088 -r 5 -u 50 -t 60
 Rate of 5 users per second, total requests up to 50 users for 60 seconds,
 
 ```bash
-locust -f mistral_7b_gtpq.py -P 7001 -H http://localhost:7088 -r 5 -u 50 -t 60
+locust -f llama3.2-1b.py -P 7001 -H http://localhost:7088 -r 5 -u 50 -t 60
 ```
 
 ![alt text](llama3.2-1b.png)
