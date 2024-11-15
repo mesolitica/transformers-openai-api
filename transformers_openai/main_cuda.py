@@ -18,6 +18,7 @@ from transformers_openai.cache import (
 from fastapi import Request
 from sse_starlette import ServerSentEvent
 from datetime import datetime
+from contextlib import nullcontext
 import asyncio
 import time
 import logging
@@ -47,7 +48,9 @@ def load_model():
     else:
         global_cache = DynamicLengthDecoderCache()
 
+profiler = lambda: torch.autograd.profiler.profile(use_cuda = True, use_kineto = True, use_cpu = False)
 
+@torch.no_grad()
 async def prefill():
     need_sleep = True
     while True:
@@ -80,7 +83,9 @@ async def prefill():
 
             max_len = max(lengths)
 
-            with torch.no_grad():
+            context = profiler() if args.torch_autograd_profiling else nullcontext()
+
+            with context as prof:
                 inputs = [{'input_ids': inputs[i][0]} for i in range(len(inputs))]
                 input_ids = tokenizer.pad(inputs, padding=True, return_tensors='pt').to(device)
 
@@ -107,44 +112,47 @@ async def prefill():
                 out_logits = out[0]
                 out_caches = out[1]
 
-            cache_exists = len(global_cache.key_cache)
+                cache_exists = len(global_cache.key_cache)
 
-            for k in range(len(out_caches)):
-                key_cache = {}
-                value_cache = {}
-                cross_key_cache = {}
-                cross_value_cache = {}
-                for i in range(len(batch)):
-                    key_cache[uuids[i]] = out_caches[k][0][i: i + 1, :, :lengths[i]]
-                    value_cache[uuids[i]] = out_caches[k][1][i: i + 1, :, :lengths[i]]
-                    if args.architecture_type == 'encoder-decoder':
-                        cross_key_cache[uuids[i]] = out_caches[k][2][i: i + 1, :, :lengths[i]]
-                        cross_value_cache[uuids[i]] = out_caches[k][3][i: i + 1, :, :lengths[i]]
+                for k in range(len(out_caches)):
+                    key_cache = {}
+                    value_cache = {}
+                    cross_key_cache = {}
+                    cross_value_cache = {}
+                    for i in range(len(batch)):
+                        key_cache[uuids[i]] = out_caches[k][0][i: i + 1, :, :lengths[i]]
+                        value_cache[uuids[i]] = out_caches[k][1][i: i + 1, :, :lengths[i]]
+                        if args.architecture_type == 'encoder-decoder':
+                            cross_key_cache[uuids[i]] = out_caches[k][2][i: i + 1, :, :lengths[i]]
+                            cross_value_cache[uuids[i]] = out_caches[k][3][i: i + 1, :, :lengths[i]]
 
-                if cache_exists:
-                    global_cache.key_cache[k].update(key_cache)
-                    global_cache.value_cache[k].update(value_cache)
-                    if args.architecture_type == 'encoder-decoder':
-                        global_cache.cross_key_cache[k].update(cross_key_cache)
-                        global_cache.cross_value_cache[k].update(cross_value_cache)
+                    if cache_exists:
+                        global_cache.key_cache[k].update(key_cache)
+                        global_cache.value_cache[k].update(value_cache)
+                        if args.architecture_type == 'encoder-decoder':
+                            global_cache.cross_key_cache[k].update(cross_key_cache)
+                            global_cache.cross_value_cache[k].update(cross_value_cache)
+                    else:
+                        global_cache.key_cache.append(key_cache)
+                        global_cache.value_cache.append(value_cache)
+                        if args.architecture_type == 'encoder-decoder':
+                            global_cache.cross_key_cache.append(cross_key_cache)
+                            global_cache.cross_value_cache.append(cross_value_cache)
+
+                if args.architecture_type == 'encoder-decoder':
+                    last = []
+                    for i in range(len(batch)):
+                        last.append((
+                            input_ids['attention_mask'][i:i + 1, :lengths[i]], 
+                            out_encoder[i:i + 1, :lengths[i]]))
                 else:
-                    global_cache.key_cache.append(key_cache)
-                    global_cache.value_cache.append(value_cache)
-                    if args.architecture_type == 'encoder-decoder':
-                        global_cache.cross_key_cache.append(cross_key_cache)
-                        global_cache.cross_value_cache.append(cross_value_cache)
+                    last = [None] * len(batch)
 
-            if args.architecture_type == 'encoder-decoder':
-                last = []
-                for i in range(len(batch)):
-                    last.append((
-                        input_ids['attention_mask'][i:i + 1, :lengths[i]], 
-                        out_encoder[i:i + 1, :lengths[i]]))
-            else:
-                last = [None] * len(batch)
-
-            for i in range(len(futures)):
-                futures[i].set_result((out_logits[i: i + 1, -1:], last[i]))
+                for i in range(len(futures)):
+                    futures[i].set_result((out_logits[i: i + 1, -1:], last[i]))
+            
+            if args.torch_autograd_profiling:
+                print(prof.key_averages().table(sort_by='self_cpu_time_total'))
 
             for k in range(len(out_caches)):
                 temp = list(out_caches[k])
@@ -158,7 +166,7 @@ async def prefill():
                 if not futures[i].done():
                     futures[i].set_exception(e)
 
-
+@torch.no_grad()
 async def step():
     need_sleep = True
     while True:
@@ -192,7 +200,9 @@ async def step():
             global_cache.current_uuid = uuids
             max_len_lengths = max(lengths)
 
-            with torch.no_grad():
+            context = profiler() if args.torch_autograd_profiling else nullcontext()
+
+            with context as prof:
                 inputs = torch.concat(inputs, dim=0)
                 attention_mask = efficient_attention_mask(
                     batch_size=len(lengths),
@@ -229,6 +239,9 @@ async def step():
                     )
 
                 out_logits = out[0]
+            
+            if args.torch_autograd_profiling:
+                print(prof.key_averages().table(sort_by='self_cpu_time_total'))
 
             for i in range(len(futures)):
                 futures[i].set_result((out_logits[i: i + 1, -1:],))
@@ -241,7 +254,7 @@ async def step():
                     futures[i].set_exception(e)
 
 
-async def stream(inputs, id, created, form, request):
+async def stream(inputs, created, form, request):
 
     terminators = [tokenizer.eos_token_id]
     replace_tokens = [tokenizer.eos_token]
@@ -254,7 +267,10 @@ async def stream(inputs, id, created, form, request):
     mask_penalty = torch.ones((len(inputs), model.config.vocab_size)).cuda()
 
     initial_length = inputs.shape[1]
-    uuid = request.scope['request']['uuid']
+    if isinstance(request, dict):
+        uuid = request['uuid']
+    else:
+        uuid = request.scope['request']['uuid']
     out_encoder = None
 
     try:
@@ -291,7 +307,7 @@ async def stream(inputs, id, created, form, request):
             mask_penalty[0, idx_next[0]] = form.repetition_penalty
             token = decode(tokenizer, idx_next)
 
-            if k == 0:
+            if k == 0 and not isinstance(request, dict):
                 request.scope['request']['time_first_token'] = time.time()
 
             for t in replace_tokens:
@@ -309,7 +325,7 @@ async def stream(inputs, id, created, form, request):
             inputs = idx_next.unsqueeze(0)
 
             data = {
-                'id': id,
+                'id': uuid,
                 'choices': [
                     {'delta': {
                         'content': token,
@@ -330,8 +346,9 @@ async def stream(inputs, id, created, form, request):
             yield json.dumps(data)
             await asyncio.sleep(0)
 
-        request.scope['request']['time_max_tokens'] = time.time()
-        request.scope['request']['total_tokens'] = k
+        if not isinstance(request, dict):
+            request.scope['request']['time_max_tokens'] = time.time()
+            request.scope['request']['total_tokens'] = k
 
     except asyncio.CancelledError as e:
         logging.warning(f"model step cancelled {uuid}")
@@ -368,10 +385,12 @@ async def chat_completions(
         add_special_tokens=False,
     ).to(device)
 
-    id = request.scope['request']['uuid']
     created = int(time.time())
-
-    func = stream(inputs=inputs, id=id, created=created, form=form, request=request)
+    if isinstance(request, dict):
+        uuid = request['uuid']
+    else:
+        uuid = request.scope['request']['uuid']
+    func = stream(inputs=inputs, created=created, form=form, request=request)
 
     if form.stream:
         return func
@@ -384,7 +403,7 @@ async def chat_completions(
             tokens.append(data['choices'][0]['delta']['content'])
 
         data = {
-            'id': id,
+            'id': uuid,
             'choices': [
                 {'finish_reason': 'stop',
                  'index': 0,

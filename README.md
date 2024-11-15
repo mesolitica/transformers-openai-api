@@ -91,8 +91,8 @@ optional arguments:
 ### Run Decoder
 
 ```
-CUDA_VISIBLE_DEVICES=2 python3.10 -m transformers_openai.main \
---host 0.0.0.0 --port 7088 --hf-model meta-llama/Llama-3.2-1B-Instruct
+python3 -m transformers_openai.main \
+--host 0.0.0.0 --port 7088 --hf-model meta-llama/Llama-3.1-8B-Instruct
 ```
 
 #### Example OpenAI library

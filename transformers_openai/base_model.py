@@ -14,8 +14,8 @@ class Parameters(BaseModel):
 
 
 class ChatMessage(BaseModel):
-    role: Optional[str] = None
-    content: Optional[str] = None
+    role: Optional[str] = 'user'
+    content: Optional[str] = 'Hello!'
 
     def __str__(self) -> str:
         if self.role == 'system':

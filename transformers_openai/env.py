@@ -70,6 +70,11 @@ def parse_arguments():
         help='maximum of batch size during continuous batching (default: %(default)s, env: CONTINUOUS_BATCHING_BATCH_SIZE)'
     )
     parser.add_argument(
+        '--continuous-batching-warmup-batch-size', type=float,
+        default=int(os.environ.get('CONTINUOUS_BATCHING_WARMUP_BATCH_SIZE', '5')),
+        help='maximum of batch size during continuous batching (default: %(default)s, env: CONTINUOUS_BATCHING_WARMUP_BATCH_SIZE)'
+    )
+    parser.add_argument(
         '--accelerator-type', default=os.environ.get('ACCELERATOR_TYPE', 'cuda'),
         help='Accelerator type (default: %(default)s, env: ACCELERATOR_TYPE)'
     )
@@ -78,6 +83,12 @@ def parse_arguments():
         type=int,
         default=int(os.environ.get('MAX_CONCURRENT', '100')),
         help='Maximum concurrent requests (default: %(default)s, env: MAX_CONCURRENT)'
+    )
+    parser.add_argument(
+        '--torch-autograd-profiling',
+        type=lambda x: x.lower() == 'true',
+        default=os.environ.get('TORCH_AUTOGRAD_PROFILING', 'false').lower() == 'true',
+        help='Use torch.autograd.profiler.profile() to profile prefill and step (default: %(default)s, env: TORCH_AUTOGRAD_PROFILING)'
     )
 
     args = parser.parse_args()
