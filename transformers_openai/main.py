@@ -99,32 +99,6 @@ async def shutdown_event():
     except asyncio.CancelledError:
         pass
 
-async def warmup_chat_completions_main(index=0):
-    logging.info(f'{index}, warming up chat completion')
-    form = ChatCompletionForm(
-        messages = [{'role': 'user', 'content': 'hello'}], 
-        temperature = 0.9,
-        max_length = 256,
-        stream = False,
-    )
-    generator = chat_completions(form=form, request={'uuid': index})
-    r = await generator
-    logging.info(f'{index}, {r}')
-
-@app.on_event("startup")
-async def warmup():
-    max_batch_size = args.continuous_batching_warmup_batch_size
-    for k in range(max_batch_size):
-        tasks = []
-        for index in range(k + 1):
-            if args.serving_type == 'chat':
-                f = warmup_chat_completions_main(index)
-            
-            task = asyncio.create_task(f)
-            tasks.append(task)
-        
-        await asyncio.gather(*tasks)
-
 
 if __name__ == "__main__":
     uvicorn.run(

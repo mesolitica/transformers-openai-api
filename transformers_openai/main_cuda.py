@@ -46,7 +46,19 @@ def load_model():
     if args.architecture_type == 'encoder-decoder':
         global_cache = DynamicLengthEncoderDecoderCache()
     else:
-        global_cache = DynamicLengthDecoderCache()
+        if args.static_cache:
+            logging.info('initializing static cache')
+            global_cache = StaticLengthDecoderCache(
+                max_length = args.static_cache_max_length,
+                device = device,
+                head_size = model.config.num_attention_heads,
+                dim_size = model.config.hidden_size // model.config.num_attention_heads,
+                num_hidden_layers = model.config.num_hidden_layers,
+                dtype = model.dtype,
+            )
+        else:
+            logging.info('initializing dynamic cache')
+            global_cache = DynamicLengthDecoderCache()
 
 profiler = lambda: torch.autograd.profiler.profile(use_cuda = True, use_kineto = True, use_cpu = False)
 
@@ -212,6 +224,9 @@ async def step():
                     dtype=torch_dtype,
                     ones=args.architecture_type == 'encoder-decoder'
                 )
+                if attention_mask.shape[0] > 1:
+                    print(attention_mask)
+                    print('attention_mask', attention_mask.shape)
 
                 if args.architecture_type == 'encoder-decoder':
                     encoder_attention_mask = [out_encoders[i][0] for i in range(len(out_encoders))]
@@ -361,11 +376,11 @@ async def stream(inputs, created, form, request):
     finally:
         logging.debug(f'purging {uuid} KV cache')
         for i in range(len(global_cache.key_cache)):
-            global_cache.key_cache[i].pop(uuid, None)
-            global_cache.value_cache[i].pop(uuid, None)
+            key_cache = global_cache.key_cache[i].pop(uuid, None)
+            value_cache = global_cache.value_cache[i].pop(uuid, None)
             if args.architecture_type == 'encoder-decoder':
-                global_cache.cross_key_cache[i].pop(uuid, None)
-                global_cache.cross_value_cache[i].pop(uuid, None)
+                cross_key_cache = global_cache.cross_key_cache[i].pop(uuid, None)
+                cross_value_cache = global_cache.cross_value_cache[i].pop(uuid, None)
         torch.cuda.empty_cache()
 
 

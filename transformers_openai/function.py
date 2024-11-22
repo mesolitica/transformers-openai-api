@@ -49,7 +49,6 @@ def logits_to_probs(
     top_k: Optional[int] = None,
     top_p: Optional[float] = None,
 ):
-
     logits = logits / mask_penalty
     if temperature > 0:
         logits = logits / max(temperature, 1e-5)

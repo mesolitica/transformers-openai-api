@@ -75,6 +75,17 @@ def parse_arguments():
         help='maximum of batch size during continuous batching (default: %(default)s, env: CONTINUOUS_BATCHING_WARMUP_BATCH_SIZE)'
     )
     parser.add_argument(
+        '--static-cache', type=lambda x: x.lower() == 'true',
+        default=os.environ.get('STATIC_CACHE', 'false').lower() == 'true',
+        help='Preallocate KV Cache for faster inference (default: %(default)s, env: STATIC_CACHE)'
+    )
+    parser.add_argument(
+        '--static-cache-max-length',
+        type=int,
+        default=int(os.environ.get('STATIC_CACHE_MAX_LENGTH', '8192')),
+        help='Maximum concurrent requests (default: %(default)s, env: STATIC_CACHE_MAX_LENGTH)'
+    )
+    parser.add_argument(
         '--accelerator-type', default=os.environ.get('ACCELERATOR_TYPE', 'cuda'),
         help='Accelerator type (default: %(default)s, env: ACCELERATOR_TYPE)'
     )

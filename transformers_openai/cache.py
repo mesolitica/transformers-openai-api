@@ -139,7 +139,6 @@ class DynamicLengthEncoderDecoderCache(Cache):
         layer_idx: int,
         cache_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        
         keys, values = [], []
         for i, k in enumerate(self.current_uuid):
             self.key_cache[layer_idx][k] = torch.cat(
@@ -149,8 +148,15 @@ class DynamicLengthEncoderDecoderCache(Cache):
             keys.append(self.key_cache[layer_idx][k])
             values.append(self.value_cache[layer_idx][k])
 
+
         k = pad_kv(keys)
         v = pad_kv(values)
+
+        if k.shape[0] > 1:
+            print(k.shape, v.shape)
+            print([keys[i].shape for i in range(len(keys))])
+            print([values[i].shape for i in range(len(values))])
+            print()
         
         return k, v
 
