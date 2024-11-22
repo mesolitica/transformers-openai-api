@@ -3,6 +3,7 @@ from transformers_openai.function import (
     sample,
     pad_attention_mask,
     pad_hidden_encoder,
+    prefill_attention_mask,
     efficient_attention_mask,
 )
 from transformers_openai.function_hf import (
@@ -26,6 +27,7 @@ import torch
 import json
 import os, sys
 import traceback
+import gc
 
 model = None
 tokenizer = None
@@ -114,8 +116,17 @@ async def prefill():
                     )
                     out_encoder = out_encoder[0]
                 else:
+                    print(input_ids, lengths)
+                    attention_mask = prefill_attention_mask(
+                        batch_size=len(lengths),
+                        max_len=max_len,
+                        lengths=lengths,
+                        device=device,
+                        dtype=torch_dtype,
+                    )
                     out = model(
-                        **input_ids,
+                        input_ids=input_ids['input_ids'],
+                        attention_mask=attention_mask,
                         past_key_values=None,
                         use_cache=True,
                         return_dict=False
@@ -124,7 +135,8 @@ async def prefill():
                 out_logits = out[0]
                 out_caches = out[1]
 
-                cache_exists = len(global_cache.key_cache)
+                cache_exists = len(global_cache.key_cache) > 0
+                print(cache_exists, lengths)
 
                 for k in range(len(out_caches)):
                     key_cache = {}
@@ -160,8 +172,12 @@ async def prefill():
                 else:
                     last = [None] * len(batch)
 
+                print(lengths, out_logits.shape)
                 for i in range(len(futures)):
-                    futures[i].set_result((out_logits[i: i + 1, -1:], last[i]))
+                    # if
+                    # else:
+                    o = out_logits[i:i + 1, lengths[i] - 1:lengths[i]]
+                    futures[i].set_result((o, last[i]))
             
             if args.torch_autograd_profiling:
                 print(prof.key_averages().table(sort_by='self_cpu_time_total'))
@@ -172,7 +188,7 @@ async def prefill():
                     del temp[0]
 
         except Exception as e:
-            print(f"Error in prefill: {e}")
+            logging.warning(f"Error in prefill: {e}")
             futures = [batch[i][0] for i in range(len(batch))]
             for i in range(len(futures)):
                 if not futures[i].done():
@@ -210,7 +226,7 @@ async def step():
             uuids = [batch[i][4] for i in range(len(batch))]
 
             global_cache.current_uuid = uuids
-            max_len_lengths = max(lengths)
+            max_len = max(lengths)
 
             context = profiler() if args.torch_autograd_profiling else nullcontext()
 
@@ -218,15 +234,12 @@ async def step():
                 inputs = torch.concat(inputs, dim=0)
                 attention_mask = efficient_attention_mask(
                     batch_size=len(lengths),
-                    max_len=max_len_lengths,
+                    max_len=max_len,
                     lengths=lengths,
                     device=device,
                     dtype=torch_dtype,
                     ones=args.architecture_type == 'encoder-decoder'
                 )
-                if attention_mask.shape[0] > 1:
-                    print(attention_mask)
-                    print('attention_mask', attention_mask.shape)
 
                 if args.architecture_type == 'encoder-decoder':
                     encoder_attention_mask = [out_encoders[i][0] for i in range(len(out_encoders))]
@@ -262,7 +275,7 @@ async def step():
                 futures[i].set_result((out_logits[i: i + 1, -1:],))
 
         except Exception as e:
-            print(f"Error in step: {e}")
+            logging.warning(f"Error in step: {e}")
             futures = [batch[i][0] for i in range(len(batch))]
             for i in range(len(futures)):
                 if not futures[i].done():
@@ -363,7 +376,7 @@ async def stream(inputs, created, form, request):
 
         if not isinstance(request, dict):
             request.scope['request']['time_max_tokens'] = time.time()
-            request.scope['request']['total_tokens'] = k
+            request.scope['request']['total_tokens'] = k + 1
 
     except asyncio.CancelledError as e:
         logging.warning(f"model step cancelled {uuid}")
@@ -374,6 +387,7 @@ async def stream(inputs, created, form, request):
         yield ServerSentEvent(**{"data": str(e)})
 
     finally:
+        print('purging')
         logging.debug(f'purging {uuid} KV cache')
         for i in range(len(global_cache.key_cache)):
             key_cache = global_cache.key_cache[i].pop(uuid, None)
@@ -382,6 +396,7 @@ async def stream(inputs, created, form, request):
                 cross_key_cache = global_cache.cross_key_cache[i].pop(uuid, None)
                 cross_value_cache = global_cache.cross_value_cache[i].pop(uuid, None)
         torch.cuda.empty_cache()
+        gc.collect()
 
 
 async def chat_completions(
@@ -405,6 +420,8 @@ async def chat_completions(
         uuid = request['uuid']
     else:
         uuid = request.scope['request']['uuid']
+
+    print(uuid, prompt)
     func = stream(inputs=inputs, created=created, form=form, request=request)
 
     if form.stream:
