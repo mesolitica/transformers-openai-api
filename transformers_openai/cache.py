@@ -95,12 +95,8 @@ class DynamicLengthEncoderDecoderCache(Cache):
                 keys.append(self.key_cache[layer_idx][k])
                 values.append(self.value_cache[layer_idx][k])
 
-            if not self.whisper_mode:
-                k = pad_kv(keys)
-                v = pad_kv(values)
-            else:
-                k = keys
-                v = values
+            k = pad_kv(keys)
+            v = pad_kv(values)
             return k, v
         else:
             raise KeyError(
@@ -146,21 +142,12 @@ class DynamicLengthEncoderDecoderCache(Cache):
                 [self.key_cache[layer_idx][k], key_states[i: i + 1]], dim=-2)
             self.value_cache[layer_idx][k] = torch.cat(
                 [self.value_cache[layer_idx][k], value_states[i: i + 1]], dim=-2)
-            
-            print(layer_idx, i, k, self.key_cache[layer_idx][k].shape, self.value_cache[layer_idx][k].shape)
 
             keys.append(self.key_cache[layer_idx][k])
             values.append(self.value_cache[layer_idx][k])
 
-
         k = pad_kv(keys)
         v = pad_kv(values)
-
-        # if k.shape[0] > 1:
-        #     print(k.shape, v.shape)
-        #     print([keys[i].shape for i in range(len(keys))])
-        #     print([values[i].shape for i in range(len(values))])
-        #     print()
         
         return k, v
 

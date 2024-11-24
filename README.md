@@ -7,8 +7,7 @@ Lightweight continuous batching OpenAI compatibility using HuggingFace Transform
 3. Disconnected signal, so this is to ensure early stop.
 4. Properly cleanup KV Cache after each requests.
 5. Support Encoder-Decoder T5.
-6. Continuous batching for better throughput, support both Encoder-Decoder and Decoder.
-7. Support Audio Transcriptions with streaming token using Whisper.
+6. Support Audio Transcriptions with streaming token using Whisper.
 
 ## how to install
 
@@ -357,12 +356,10 @@ Rate of 5 users per second, total requests up to 50 users for 30 seconds on shar
 
 Rate of 5 users per second, total requests up to 50 users for 60 seconds on shared RTX 3090 Ti,
 
-![alt text](stress-test/mistral_7b_gtpq_continuous.png)
+![alt text](stress-test/llama3.2-1b.png)
 
 ### Whisper Large V3
 
 Rate of 5 users per second, total requests up to 30 users for 60 seconds on shared RTX 3090 Ti,
 
-#### Continuous batch
-
-![alt text](stress-test/whisper_continuous.png)
+![alt text](stress-test/whisper.png)

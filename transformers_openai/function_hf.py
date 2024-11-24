@@ -28,7 +28,7 @@ def load_hf_model():
             args.hf_model,
             attn_implementation='sdpa',
             torch_dtype=getattr(torch, args.torch_dtype),
-        ).to(args.device)
+        ).eval().to(args.device)
 
 
 def load_hf_processor():
@@ -45,6 +45,8 @@ def load_hf_tokenizer():
     )
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = 0
+
+    tokenizer.padding_side = 'right'
     return tokenizer
 
 

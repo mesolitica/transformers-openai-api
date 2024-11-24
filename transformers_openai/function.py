@@ -2,14 +2,20 @@ import torch
 import torch.nn.functional as F
 from typing import Optional
 
-def prefill_attention_mask(batch_size, max_len, lengths, device, dtype, ones=True):
+def prefill_attention_mask(batch_size, max_len, lengths, device, dtype, causal=True):
     lengths = torch.tensor(lengths)
-    causal_mask = torch.triu(torch.ones(max_len, max_len, dtype=torch.bool), diagonal=1)
-    batch_indices = torch.arange(max_len).unsqueeze(0) < lengths.unsqueeze(1)
-    combined_mask = causal_mask.unsqueeze(0) | ~batch_indices.unsqueeze(2)
-    mask = combined_mask.unsqueeze(1)
-    mask = mask.type(dtype).masked_fill(mask, torch.finfo(dtype).min).to(device)
-    return mask
+    if causal:
+        causal_mask = torch.triu(torch.ones(max_len, max_len, dtype=torch.bool), diagonal=1)
+        batch_indices = torch.arange(max_len).unsqueeze(0) < lengths.unsqueeze(1)
+        combined_mask = causal_mask.unsqueeze(0) | ~batch_indices.unsqueeze(2)
+        mask = combined_mask.unsqueeze(1)
+        mask = mask.type(dtype).masked_fill(mask, torch.finfo(dtype).min)
+    else:
+        batch_indices = torch.arange(max_len).unsqueeze(0) < lengths.unsqueeze(1)
+        mask = (batch_indices.unsqueeze(1).unsqueeze(1) & batch_indices.unsqueeze(1).unsqueeze(3))
+        mask = mask.type(dtype)
+        
+    return mask.to(device)
     
 
 def efficient_attention_mask(batch_size, max_len, lengths, device, dtype, ones=True):
@@ -20,11 +26,11 @@ def efficient_attention_mask(batch_size, max_len, lengths, device, dtype, ones=T
         batch_size, 1, 1, 1)
     if ones:
         mask = left < right
-        mask = mask.type(dtype).to(device)
+        mask = mask.type(dtype)
     else:
         mask = left > right
-        mask = mask.type(dtype).masked_fill(mask, torch.finfo(dtype).min).to(device)
-    return mask
+        mask = mask.type(dtype).masked_fill(mask, torch.finfo(dtype).min)
+    return mask.to(device)
 
 
 def pad_attention_mask(attention_mask):
@@ -126,7 +132,6 @@ def cleanup_cache(cache):
                 cache[i] = list(cache[i])
                 for _ in range(len(cache[i])):
                     del cache[i][0]
-
         else:
             for _ in range(len(cache.key_cache)):
                 del cache.key_cache[0]

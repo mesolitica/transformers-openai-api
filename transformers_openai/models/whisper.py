@@ -719,8 +719,6 @@ class WhisperSdpaAttention(WhisperAttention):
         # NOTE: SDPA with memory-efficient backend is currently (torch==2.1.2) bugged when using non-contiguous inputs and a custom attn_mask,
         # but we are fine here as `_shape` do call `.contiguous()`. Reference:
         # https://github.com/pytorch/pytorch/issues/112577
-        if attention_mask is not None:
-            print('attention_mask', attention_mask.shape)
         attn_output = torch.nn.functional.scaled_dot_product_attention(
             query_states,
             key_states,

@@ -6,13 +6,14 @@ from transformers_openai.base_model import (
 )
 from transformers_openai.function import (
     sample,
-    decode,
-    load_hf_processor,
-    load_hf_model,
     pad_hidden_encoder,
     efficient_attention_mask,
     format_timestamp,
-    cleanup_cache,
+)
+from transformers_openai.function_hf import (
+    load_hf_processor,
+    load_hf_model,
+    decode,
 )
 from transformers_openai.cache import DynamicLengthEncoderDecoderCache
 from fastapi import Request
@@ -26,6 +27,9 @@ import json
 import time
 import asyncio
 import logging
+import traceback
+import gc
+
 
 buffer_size = 4096
 sample_rate = 16000
@@ -35,19 +39,22 @@ replaces = ['<|startoftranscript|>', '<|endoftext|>', '<|transcribe|>']
 pattern = r'<\|\-?\d+\.?\d*\|>'
 pattern_pair = r'<\|(\d+\.\d+)\|>(.*?)<\|(\d+\.\d+)\|>'
 
-
 model = None
 processor = None
 no_speech_token = None
+global_cache = None
+
+torch_dtype = getattr(torch, args.torch_dtype)
+device = args.device
 
 prefill_queue = asyncio.Queue()
 step_queue = asyncio.Queue()
 
-
 def load_model():
-    global model, processor, no_speech_token
+    global model, processor, no_speech_token, global_cache
     model = load_hf_model()
     processor = load_hf_processor()
+    global_cache = DynamicLengthEncoderDecoderCache(whisper_mode = True)
     try:
         no_speech_token = processor.tokenizer.convert_tokens_to_ids(['<|nospeech|>'])[0]
     except BaseException:
@@ -55,15 +62,19 @@ def load_model():
 
 
 async def prefill():
+    need_sleep = True
     while True:
-        await asyncio.sleep(args.continuous_batching_microsleep)
+        if need_sleep:
+            await asyncio.sleep(args.continuous_batching_microsleep)
         try:
+            need_sleep = True
             batch = []
             while not prefill_queue.empty():
                 try:
                     request = await asyncio.wait_for(prefill_queue.get(), timeout=1e-4)
                     batch.append(request)
                     if len(batch) >= args.continuous_batching_batch_size:
+                        need_sleep = False
                         break
                 except asyncio.TimeoutError:
                     break
@@ -72,90 +83,103 @@ async def prefill():
                 continue
 
             logging.debug(f'{str(datetime.now())} prefill batch size of {len(batch)}')
+
             futures = [batch[i][0] for i in range(len(batch))]
             langs = [batch[i][1] for i in range(len(batch))]
             inputs = [batch[i][2] for i in range(len(batch))]
+            uuids = [batch[i][5] for i in range(len(batch))]
 
-            inputs = torch.concat(inputs)
-            out_encoder = model.model.encoder(inputs)
-            out_encoder = out_encoder[0]
-            langs_none_map, langs_none = {}, []
-            index = 0
-            for i in range(len(langs)):
-                if langs[i] is None:
-                    langs_none_map[index] = i
-                    langs_none.append(out_encoder[i:i + 1])
-                    index += 1
+            with torch.no_grad():
+                inputs = torch.concat(inputs)
+                out_encoder = model.model.encoder(inputs)
+                out_encoder = out_encoder[0]
+                langs_none_map, langs_none = {}, []
+                index = 0
+                for i in range(len(langs)):
+                    if langs[i] is None:
+                        langs_none_map[index] = i
+                        langs_none.append(out_encoder[i:i + 1])
+                        index += 1
 
-            if len(langs_none):
-                labels = processor.tokenizer(
-                    '<|startoftranscript|>',
-                    add_special_tokens=False,
-                    return_tensors='pt',
-                ).to('cuda')['input_ids']
+                if len(langs_none):
+                    labels = processor.tokenizer(
+                        '<|startoftranscript|>',
+                        add_special_tokens=False,
+                        return_tensors='pt',
+                    ).to('cuda')['input_ids']
 
-                labels = labels.repeat(len(langs_none), 1)
-                langs_none = torch.concat(langs_none, dim=0)
+                    labels = labels.repeat(len(langs_none), 1)
+                    langs_none = torch.concat(langs_none, dim=0)
 
-                out_decoder = model.model.decoder(
-                    labels,
-                    encoder_hidden_states=langs_none,
+                    out_decoder = model.model.decoder(
+                        labels,
+                        encoder_hidden_states=langs_none,
+                        return_dict=False,
+                    )
+                    proj = model.proj_out(out_decoder[0][:, -1:]).argmax(-1)
+
+                    langs_none = processor.tokenizer.batch_decode(proj)
+                    langs_none = [l[2:-2] for l in langs_none]
+                    for k, v in langs_none_map.items():
+                        langs[v] = langs_none[k]
+
+                    del labels, langs_none, out_decoder[0], proj
+
+                prompt_ids = []
+                for lang in langs:
+                    lang_token = processor.tokenizer.encode(f'<|{lang}|>', add_special_tokens=False)[0]
+                    prompt_ids.append([50258, lang_token, 50360, 50365])
+
+                inputs = torch.tensor(prompt_ids).to('cuda')
+
+                out = model.model.decoder(
+                    inputs,
+                    encoder_hidden_states=out_encoder,
+                    past_key_values=None,
+                    position_ids=None,
+                    use_cache=True,
                     return_dict=False,
                 )
-                proj = model.proj_out(out_decoder[0][:, -1:]).argmax(-1)
+                out_logits = model.proj_out(out[0][:, -1:])
+                out_caches = out[1]
 
-                langs_none = processor.tokenizer.batch_decode(proj)
-                langs_none = [l[2:-2] for l in langs_none]
-                for k, v in langs_none_map.items():
-                    langs[v] = langs_none[k]
+                cache_exists = len(global_cache.key_cache) > 0
 
-                del labels, langs_none, out_decoder[0], proj
-
-            prompt_ids = []
-            for lang in langs:
-                lang_token = processor.tokenizer.encode(f'<|{lang}|>', add_special_tokens=False)[0]
-                prompt_ids.append([50258, lang_token, 50360, 50365])
-
-            inputs = torch.tensor(prompt_ids).to('cuda')
-
-            out = model.model.decoder(
-                inputs,
-                encoder_hidden_states=out_encoder,
-                past_key_values=None,
-                position_ids=None,
-                use_cache=True,
-                return_dict=False,
-            )
-            out_logits = model.proj_out(out[0][:, -1:])
-            out_caches = out[1]
-
-            caches = []
-            for i in range(len(batch)):
-                cache = []
                 for k in range(len(out_caches)):
-                    cache_ = [
-                        out_caches[k][0][i:i + 1],
-                        out_caches[k][1][i:i + 1],
-                        out_caches[k][2][i:i + 1],
-                        out_caches[k][3][i:i + 1],
-                    ]
-                    cache.append(cache_)
-                caches.append(cache)
+                    key_cache = {}
+                    value_cache = {}
+                    cross_key_cache = {}
+                    cross_value_cache = {}
 
-            for i in range(len(futures)):
-                futures[i].set_result((out_logits[i: i + 1], caches[i], out_encoder[i:i + 1]))
+                    for i in range(len(batch)):
+                        key_cache[uuids[i]] = out_caches[k][0][i: i + 1]
+                        value_cache[uuids[i]] = out_caches[k][1][i: i + 1]
+                        cross_key_cache[uuids[i]] = out_caches[k][2][i: i + 1]
+                        cross_value_cache[uuids[i]] = out_caches[k][3][i: i + 1]
 
-            del out_logits, out_encoder
+                    if cache_exists:
+                        global_cache.key_cache[k].update(key_cache)
+                        global_cache.value_cache[k].update(value_cache)
+                        global_cache.cross_key_cache[k].update(cross_key_cache)
+                        global_cache.cross_value_cache[k].update(cross_value_cache)
+                    else:
+                        global_cache.key_cache.append(key_cache)
+                        global_cache.value_cache.append(value_cache)
+                        global_cache.cross_key_cache.append(cross_key_cache)
+                        global_cache.cross_value_cache.append(cross_value_cache)
 
-            for k in range(len(out_caches)):
-                temp = list(out_caches[k])
-                for j in range(len(out_caches[k])):
-                    del temp[0]
+                for i in range(len(futures)):
+                    futures[i].set_result((out_logits[i: i + 1], out_encoder[i:i + 1]))
 
-            torch.cuda.empty_cache()
+                del out_logits, out_encoder
+
+                for k in range(len(out_caches)):
+                    temp = list(out_caches[k])
+                    for j in range(len(out_caches[k])):
+                        del temp[0]
 
         except Exception as e:
-            print(f"Error in prefill: {e}")
+            logging.warning(f"Error in prefill: {e}")
             futures = [batch[i][0] for i in range(len(batch))]
             for i in range(len(futures)):
                 if not futures[i].done():
@@ -163,15 +187,19 @@ async def prefill():
 
 
 async def step():
+    need_sleep = True
     while True:
-        await asyncio.sleep(args.continuous_batching_microsleep)
+        if need_sleep:
+            await asyncio.sleep(args.continuous_batching_microsleep)
         try:
+            need_sleep = True
             batch = []
             while not step_queue.empty():
                 try:
-                    request = await asyncio.wait_for(step_queue.get(), timeout=1e-4)
+                    request = await asyncio.wait_for(step_queue.get(), timeout=1e-6)
                     batch.append(request)
                     if len(batch) >= args.continuous_batching_batch_size:
+                        need_sleep = False
                         break
                 except asyncio.TimeoutError:
                     break
@@ -185,86 +213,42 @@ async def step():
             langs = [batch[i][1] for i in range(len(batch))]
             inputs = [batch[i][2] for i in range(len(batch))]
             out_encoders = [batch[i][3] for i in range(len(batch))]
-            caches = [batch[i][4] for i in range(len(batch))]
-            lengths = [batch[i][5] for i in range(len(batch))]
+            lengths = [batch[i][4] for i in range(len(batch))]
+            uuids = [batch[i][5] for i in range(len(batch))]
 
-            cache_dtype = caches[0][0][0].dtype
-            cache_device = caches[0][0][0].device
+            global_cache.current_uuid = uuids
+            max_len = max(lengths)
 
-            kv_len = [caches[i][0][0].shape[2] for i in range(len(batch))]
-            max_len = max(kv_len)
-            max_len_lengths = max(lengths)
+            with torch.no_grad():
+                inputs = torch.concat(inputs, dim=0)
+                out_encoder = pad_hidden_encoder(out_encoders)
+                attention_mask = efficient_attention_mask(
+                    batch_size=len(lengths),
+                    max_len=max_len,
+                    lengths=lengths,
+                    device=device,
+                    dtype=torch_dtype,
+                )
+                position_ids = torch.tensor([[l + 3 for l in lengths]]).T.cuda()
+                out = model.model.decoder(
+                    inputs,
+                    encoder_hidden_states=out_encoder,
+                    past_key_values=global_cache,
+                    position_ids=position_ids,
+                    use_cache=True,
+                    return_dict=False,
+                )
+                out_logits = model.proj_out(out[0][:, -1:])
 
-            cache = DynamicLengthEncoderDecoderCache(lengths=lengths, whisper_mode=True)
+                for i in range(len(futures)):
+                    futures[i].set_result((out_logits[i: i + 1],))
 
-            len_cache = len(caches[0])
-            len_kv = len(caches[0][0])
-
-            for n in range(len_cache):
-
-                key_cache = []
-                value_cache = []
-                for i in range(len(batch)):
-                    key_cache.append(caches[i][n][0])
-                    value_cache.append(caches[i][n][1])
-
-                cache.key_cache.append(key_cache)
-                cache.value_cache.append(value_cache)
-
-                key_cache = []
-                value_cache = []
-                for i in range(len(batch)):
-                    key_cache.append(caches[i][n][2])
-                    value_cache.append(caches[i][n][3])
-
-                key_cache = torch.concat(key_cache)
-                value_cache = torch.concat(value_cache)
-
-                cache.cross_key_cache.append(key_cache)
-                cache.cross_value_cache.append(value_cache)
-                del key_cache, value_cache
-
-            inputs = torch.concat(inputs, dim=0)
-            out_encoder = pad_hidden_encoder(out_encoders)
-            position_ids = torch.tensor([[l + 3 for l in lengths]]).T.cuda()
-            out = model.model.decoder(
-                inputs,
-                encoder_hidden_states=out_encoder,
-                past_key_values=cache,
-                position_ids=position_ids,
-                use_cache=True,
-                return_dict=False,
-            )
-            out_logits = model.proj_out(out[0][:, -1:])
-
-            caches = []
-            for i in range(len(batch)):
-                new_cache = []
-                for k in range(len(cache)):
-                    keys = cache.key_cache[k]
-                    values = cache.value_cache[k]
-                    v = [keys[i], values[i]]
-                    keys = cache.cross_key_cache[k]
-                    values = cache.cross_value_cache[k]
-                    v.extend([keys[i: i + 1], values[i: i + 1]])
-                    new_cache.append(v)
-                caches.append(new_cache)
-
-            for i in range(len(futures)):
-                futures[i].set_result((out_logits[i: i + 1], caches[i]))
-
-            out = list(out)
-            del inputs, out_encoder, out[0], out_logits
-
-            for k in range(len(cache)):
-                temp = list(cache[k])
-                for j in range(len(temp)):
-                    del temp[0]
-
-            torch.cuda.empty_cache()
+                out = list(out)
+                del inputs, out_encoder, out[0], out_logits
 
         except Exception as e:
-            print(f"Error in step: {e}")
+            print(traceback.format_exc())
+            logging.warning(f"Error in step: {e}")
             futures = [batch[i][0] for i in range(len(batch))]
             for i in range(len(futures)):
                 if not futures[i].done():
@@ -283,38 +267,34 @@ async def generate(
     top_k,
     request,
 ):
-
-    if 'cache' in request.scope and request.scope['cache'] is not None:
-        cleanup_cache(request.scope['cache'])
-
-        torch.cuda.empty_cache()
-
-    cache = None
     no_speech_prob = 0.0
-
     mask_penalty = torch.ones((1, model.config.vocab_size)).cuda()
 
     with torch.no_grad():
-
         inputs = processor(
             [wav_data],
             return_tensors='pt',
-            sampling_rate=sample_rate).to(
-            model.device)
+            sampling_rate=sample_rate
+        ).to(model.device)
         inputs = inputs['input_features'].type(model.dtype)
 
-        out_encoder = None
+    out_encoder = None
+    texts = f'<|{language}|><|{last_timestamp}|>'
 
-        texts = f'<|{language}|><|{last_timestamp}|>'
+    if response_format != 'srt':
+        text = texts
+        if response_format == 'json':
+            text = json.dumps({'token': texts})
+        yield text
 
-        if response_format != 'srt':
-            text = texts
-            if response_format == 'json':
-                text = json.dumps({'token': texts})
+    if isinstance(request, dict):
+        uuid = request['uuid']
+    else:
+        uuid = request.scope['request']['uuid']
+    uuid = f'{uuid}_{last_i}'
 
-            yield text
-
-        # minus 4 because ['<|startoftranscript|>', lang token, '<|transcribe|>', '<|0.0|>'] tokens
+    # minus 4 because ['<|startoftranscript|>', lang token, '<|transcribe|>', '<|0.0|>'] tokens
+    try:
         for k in range(model.config.max_length - 4):
             if k == 0:
                 q = prefill_queue
@@ -322,15 +302,13 @@ async def generate(
                 q = step_queue
 
             future = asyncio.Future()
-            await q.put((future, language, inputs, out_encoder, cache, k))
+            await q.put((future, language, inputs, out_encoder, k, uuid))
             out = await future
 
             logits = out[0]
-            cache = out[1]
-            request.scope['cache'] = cache
 
             if out_encoder is None:
-                out_encoder = out[2]
+                out_encoder = out[1]
 
             idx_next, probs = sample(
                 logits,
@@ -347,7 +325,6 @@ async def generate(
                 request.scope['request']['time_first_token'] = time.time()
 
             ids = idx_next[0].tolist()
-
             if ids == model.config.eos_token_id:
                 break
 
@@ -390,6 +367,24 @@ async def generate(
                         token = json.dumps({'token': token})
 
                     yield token
+    
+    except asyncio.CancelledError as e:
+        logging.warning(f"model step cancelled {uuid}")
+        yield ServerSentEvent(**{"data": str(e)})
+    
+    except Exception as e:
+        logging.error(f"model step exception {e} {uuid}")
+        yield ServerSentEvent(**{"data": str(e)})
+
+    finally:
+        logging.debug(f'purging {uuid} KV cache')
+        for i in range(len(global_cache.key_cache)):
+            key_cache = global_cache.key_cache[i].pop(uuid, None)
+            value_cache = global_cache.value_cache[i].pop(uuid, None)
+            cross_key_cache = global_cache.cross_key_cache[i].pop(uuid, None)
+            cross_value_cache = global_cache.cross_value_cache[i].pop(uuid, None)
+        torch.cuda.empty_cache()
+        gc.collect()
 
 
 async def audio(file, language, response_format, repetition_penalty, temperature, top_p, top_k, request):

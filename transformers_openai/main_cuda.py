@@ -48,23 +48,10 @@ def load_model():
     if args.architecture_type == 'encoder-decoder':
         global_cache = DynamicLengthEncoderDecoderCache()
     else:
-        if args.static_cache:
-            logging.info('initializing static cache')
-            global_cache = StaticLengthDecoderCache(
-                max_length = args.static_cache_max_length,
-                device = device,
-                head_size = model.config.num_attention_heads,
-                dim_size = model.config.hidden_size // model.config.num_attention_heads,
-                num_hidden_layers = model.config.num_hidden_layers,
-                dtype = model.dtype,
-            )
-        else:
-            logging.info('initializing dynamic cache')
-            global_cache = DynamicLengthDecoderCache()
+        global_cache = DynamicLengthDecoderCache()
 
 profiler = lambda: torch.autograd.profiler.profile(use_cuda = True, use_kineto = True, use_cpu = False)
 
-@torch.no_grad()
 async def prefill():
     need_sleep = True
     while True:
@@ -97,95 +84,98 @@ async def prefill():
 
             max_len = max(lengths)
 
-            context = profiler() if args.torch_autograd_profiling else nullcontext()
+            with torch.no_grad():
+                context = profiler() if args.torch_autograd_profiling else nullcontext()
 
-            with context as prof:
-                inputs = [{'input_ids': inputs[i][0]} for i in range(len(inputs))]
-                input_ids = tokenizer.pad(inputs, padding=True, return_tensors='pt').to(device)
+                with context as prof:
+                    inputs = [{'input_ids': inputs[i][0]} for i in range(len(inputs))]
+                    input_ids = tokenizer.pad(inputs, padding=True, return_tensors='pt').to(device)
 
-                if args.architecture_type == 'encoder-decoder':
-                    out_encoder = model.encoder(**input_ids, return_dict=False)
-                    inputs = torch.tensor([[model.config.decoder_start_token_id]] * len(batch), device=device)
-                    out = model(
-                        attention_mask=input_ids['attention_mask'],
-                        decoder_input_ids=inputs,
-                        encoder_outputs=out_encoder,
-                        past_key_values=None,
-                        use_cache=True,
-                        return_dict=False
-                    )
-                    out_encoder = out_encoder[0]
-                else:
-                    print(input_ids, lengths)
                     attention_mask = prefill_attention_mask(
                         batch_size=len(lengths),
                         max_len=max_len,
                         lengths=lengths,
                         device=device,
                         dtype=torch_dtype,
-                    )
-                    out = model(
-                        input_ids=input_ids['input_ids'],
-                        attention_mask=attention_mask,
-                        past_key_values=None,
-                        use_cache=True,
-                        return_dict=False
+                        causal=not args.architecture_type == 'encoder-decoder'
                     )
 
-                out_logits = out[0]
-                out_caches = out[1]
+                    if args.architecture_type == 'encoder-decoder':
+                        out_encoder = model.encoder(
+                            input_ids=input_ids['input_ids'],
+                            attention_mask=attention_mask[:, 0],
+                            return_dict=False,
+                        )
+                        inputs = torch.tensor([[model.config.decoder_start_token_id]] * len(batch), device=device)
+                        out = model(
+                            attention_mask=attention_mask[:,0,:1],
+                            decoder_input_ids=inputs,
+                            encoder_outputs=out_encoder,
+                            past_key_values=None,
+                            use_cache=True,
+                            return_dict=False
+                        )
+                        out_encoder = out_encoder[0]
+                    else:
+                        out = model(
+                            input_ids=input_ids['input_ids'],
+                            attention_mask=attention_mask,
+                            past_key_values=None,
+                            use_cache=True,
+                            return_dict=False
+                        )
 
-                cache_exists = len(global_cache.key_cache) > 0
-                print(cache_exists, lengths)
+                    out_logits = out[0]
+                    out_caches = out[1]
+
+                    cache_exists = len(global_cache.key_cache) > 0
+
+                    for k in range(len(out_caches)):
+                        key_cache = {}
+                        value_cache = {}
+                        cross_key_cache = {}
+                        cross_value_cache = {}
+                        for i in range(len(batch)):
+                            key_cache[uuids[i]] = out_caches[k][0][i: i + 1, :, :lengths[i]]
+                            value_cache[uuids[i]] = out_caches[k][1][i: i + 1, :, :lengths[i]]
+                            if args.architecture_type == 'encoder-decoder':
+                                cross_key_cache[uuids[i]] = out_caches[k][2][i: i + 1, :, :lengths[i]]
+                                cross_value_cache[uuids[i]] = out_caches[k][3][i: i + 1, :, :lengths[i]]
+
+                        if cache_exists:
+                            global_cache.key_cache[k].update(key_cache)
+                            global_cache.value_cache[k].update(value_cache)
+                            if args.architecture_type == 'encoder-decoder':
+                                global_cache.cross_key_cache[k].update(cross_key_cache)
+                                global_cache.cross_value_cache[k].update(cross_value_cache)
+                        else:
+                            global_cache.key_cache.append(key_cache)
+                            global_cache.value_cache.append(value_cache)
+                            if args.architecture_type == 'encoder-decoder':
+                                global_cache.cross_key_cache.append(cross_key_cache)
+                                global_cache.cross_value_cache.append(cross_value_cache)
+
+                    if args.architecture_type == 'encoder-decoder':
+                        last = []
+                        for i in range(len(batch)):
+                            last.append((lengths[i], out_encoder[i:i + 1, :lengths[i]]))
+                    else:
+                        last = [None] * len(batch)
+
+                    for i in range(len(futures)):
+                        if args.architecture_type == 'encoder-decoder':
+                            o = out_logits[i:i + 1, -1:]
+                        else:
+                            o = out_logits[i:i + 1, lengths[i] - 1:lengths[i]]
+                        futures[i].set_result((o, last[i]))
+                
+                if args.torch_autograd_profiling:
+                    print(prof.key_averages().table(sort_by='self_cpu_time_total'))
 
                 for k in range(len(out_caches)):
-                    key_cache = {}
-                    value_cache = {}
-                    cross_key_cache = {}
-                    cross_value_cache = {}
-                    for i in range(len(batch)):
-                        key_cache[uuids[i]] = out_caches[k][0][i: i + 1, :, :lengths[i]]
-                        value_cache[uuids[i]] = out_caches[k][1][i: i + 1, :, :lengths[i]]
-                        if args.architecture_type == 'encoder-decoder':
-                            cross_key_cache[uuids[i]] = out_caches[k][2][i: i + 1, :, :lengths[i]]
-                            cross_value_cache[uuids[i]] = out_caches[k][3][i: i + 1, :, :lengths[i]]
-
-                    if cache_exists:
-                        global_cache.key_cache[k].update(key_cache)
-                        global_cache.value_cache[k].update(value_cache)
-                        if args.architecture_type == 'encoder-decoder':
-                            global_cache.cross_key_cache[k].update(cross_key_cache)
-                            global_cache.cross_value_cache[k].update(cross_value_cache)
-                    else:
-                        global_cache.key_cache.append(key_cache)
-                        global_cache.value_cache.append(value_cache)
-                        if args.architecture_type == 'encoder-decoder':
-                            global_cache.cross_key_cache.append(cross_key_cache)
-                            global_cache.cross_value_cache.append(cross_value_cache)
-
-                if args.architecture_type == 'encoder-decoder':
-                    last = []
-                    for i in range(len(batch)):
-                        last.append((
-                            input_ids['attention_mask'][i:i + 1, :lengths[i]], 
-                            out_encoder[i:i + 1, :lengths[i]]))
-                else:
-                    last = [None] * len(batch)
-
-                print(lengths, out_logits.shape)
-                for i in range(len(futures)):
-                    # if
-                    # else:
-                    o = out_logits[i:i + 1, lengths[i] - 1:lengths[i]]
-                    futures[i].set_result((o, last[i]))
-            
-            if args.torch_autograd_profiling:
-                print(prof.key_averages().table(sort_by='self_cpu_time_total'))
-
-            for k in range(len(out_caches)):
-                temp = list(out_caches[k])
-                for j in range(len(out_caches[k])):
-                    del temp[0]
+                    temp = list(out_caches[k])
+                    for j in range(len(out_caches[k])):
+                        del temp[0]
 
         except Exception as e:
             logging.warning(f"Error in prefill: {e}")
@@ -194,7 +184,6 @@ async def prefill():
                 if not futures[i].done():
                     futures[i].set_exception(e)
 
-@torch.no_grad()
 async def step():
     need_sleep = True
     while True:
@@ -228,51 +217,61 @@ async def step():
             global_cache.current_uuid = uuids
             max_len = max(lengths)
 
-            context = profiler() if args.torch_autograd_profiling else nullcontext()
+            with torch.no_grad():
 
-            with context as prof:
-                inputs = torch.concat(inputs, dim=0)
-                attention_mask = efficient_attention_mask(
-                    batch_size=len(lengths),
-                    max_len=max_len,
-                    lengths=lengths,
-                    device=device,
-                    dtype=torch_dtype,
-                    ones=args.architecture_type == 'encoder-decoder'
-                )
+                context = profiler() if args.torch_autograd_profiling else nullcontext()
 
-                if args.architecture_type == 'encoder-decoder':
-                    encoder_attention_mask = [out_encoders[i][0] for i in range(len(out_encoders))]
-                    out_encoder = [out_encoders[i][1] for i in range(len(out_encoders))]
-                    encoder_attention_mask = pad_attention_mask(encoder_attention_mask)
-                    out_encoder = pad_hidden_encoder(out_encoder)
-                    out = model(
-                        attention_mask=encoder_attention_mask,
-                        decoder_attention_mask=attention_mask[:, 0],
-                        decoder_input_ids=inputs,
-                        encoder_outputs=(out_encoder,),
-                        past_key_values=global_cache,
-                        use_cache=True,
-                        return_dict=False
-                    )
-                else:
-                    position_ids = torch.tensor([[l - 1 for l in lengths]]).T.to(device)
-                    out = model(
-                        inputs,
-                        attention_mask=attention_mask,
-                        position_ids=position_ids,
-                        past_key_values=global_cache,
-                        use_cache=True,
-                        return_dict=False
+                with context as prof:
+                    inputs = torch.concat(inputs, dim=0)
+                    attention_mask = efficient_attention_mask(
+                        batch_size=len(lengths),
+                        max_len=max_len,
+                        lengths=lengths,
+                        device=device,
+                        dtype=torch_dtype,
+                        ones=args.architecture_type == 'encoder-decoder'
                     )
 
-                out_logits = out[0]
-            
-            if args.torch_autograd_profiling:
-                print(prof.key_averages().table(sort_by='self_cpu_time_total'))
+                    if args.architecture_type == 'encoder-decoder':
+                        encoder_lengths = [out_encoders[i][0] for i in range(len(out_encoders))]
+                        max_encoder_lengths = max(encoder_lengths)
+                        encoder_attention_mask = efficient_attention_mask(
+                            batch_size=len(lengths),
+                            max_len=max_encoder_lengths,
+                            lengths=encoder_lengths,
+                            device=device,
+                            dtype=torch_dtype,
+                            ones=args.architecture_type == 'encoder-decoder'
+                        )
+                        out_encoder = [out_encoders[i][1] for i in range(len(out_encoders))]
+                        out_encoder = pad_hidden_encoder(out_encoder)
+                        out = model(
+                            attention_mask=encoder_attention_mask[:, 0],
+                            decoder_attention_mask=attention_mask[:, 0],
+                            decoder_input_ids=inputs,
+                            encoder_outputs=(out_encoder,),
+                            past_key_values=global_cache,
+                            use_cache=True,
+                            return_dict=False
+                        )
+                    else:
+                        position_ids = torch.tensor([[l - 1 for l in lengths]]).T.to(device)
+                        out = model(
+                            inputs,
+                            attention_mask=attention_mask,
+                            position_ids=position_ids,
+                            past_key_values=global_cache,
+                            use_cache=True,
+                            return_dict=False
+                        )
 
-            for i in range(len(futures)):
-                futures[i].set_result((out_logits[i: i + 1, -1:],))
+                    out_logits = out[0]
+                
+                if args.torch_autograd_profiling:
+                    print(prof.key_averages().table(sort_by='self_cpu_time_total'))
+
+                for i in range(len(futures)):
+                    futures[i].set_result((out_logits[i: i + 1, -1:],))
 
         except Exception as e:
             logging.warning(f"Error in step: {e}")
@@ -387,7 +386,6 @@ async def stream(inputs, created, form, request):
         yield ServerSentEvent(**{"data": str(e)})
 
     finally:
-        print('purging')
         logging.debug(f'purging {uuid} KV cache')
         for i in range(len(global_cache.key_cache)):
             key_cache = global_cache.key_cache[i].pop(uuid, None)
@@ -421,7 +419,6 @@ async def chat_completions(
     else:
         uuid = request.scope['request']['uuid']
 
-    print(uuid, prompt)
     func = stream(inputs=inputs, created=created, form=form, request=request)
 
     if form.stream:
