@@ -11,11 +11,15 @@ from transformers_openai.function import (
     format_timestamp,
 )
 from transformers_openai.function_hf import (
+    load_hf_tokenizer,
     load_hf_processor,
     load_hf_model,
     decode,
 )
-from transformers_openai.cache import DynamicLengthEncoderDecoderCache
+from transformers_openai.cache import (
+    StaticLengthEncoderDecoderCache,
+    DynamicLengthEncoderDecoderCache
+)
 from fastapi import Request
 from sse_starlette import ServerSentEvent
 from torchaudio.io import StreamReader
@@ -30,6 +34,20 @@ import logging
 import traceback
 import gc
 
+if args.hqq:
+    from hqq.models.hf.base import AutoHQQHFModel
+    from hqq.core.quantize import *
+    from hqq.utils.patching import prepare_for_inference
+    import hqq.models.base as hqq_base
+    hqq_base._QUANT_LAYERS = [torch.nn.Linear, HQQLinear]
+    quant_config = BaseQuantizeConfig(
+        nbits=4,
+        group_size=64,
+        quant_scale=False,
+        quant_zero=False,
+        axis=1
+    )
+    HQQLinear.set_backend(HQQBackend.PYTORCH)
 
 buffer_size = 4096
 sample_rate = 16000
@@ -41,6 +59,7 @@ pattern_pair = r'<\|(\d+\.\d+)\|>(.*?)<\|(\d+\.\d+)\|>'
 
 model = None
 processor = None
+tokenizer = None
 no_speech_token = None
 global_cache = None
 
@@ -51,14 +70,58 @@ prefill_queue = asyncio.Queue()
 step_queue = asyncio.Queue()
 
 def load_model():
-    global model, processor, no_speech_token, global_cache
+    global model, processor, tokenizer, no_speech_token, global_cache
     model = load_hf_model()
     processor = load_hf_processor()
-    global_cache = DynamicLengthEncoderDecoderCache(whisper_mode = True)
+    tokenizer = load_hf_tokenizer()
+    if args.static_cache:
+        logging.info('use static cache')
+        global_cache = StaticLengthEncoderDecoderCache(
+            batch_size = args.continuous_batching_microsleep, 
+            encoder_max_length = args.static_cache_encoder_max_length,
+            decoder_max_length = args.static_cache_decoder_max_length,
+            encoder_head_size = model.config.encoder_attention_heads,
+            decoder_head_size = model.config.decoder_attention_heads,
+            encoder_dim_size = model.config.d_model,
+            decoder_dim_size = model.config.d_model,
+            encoder_hidden_layers = model.config.encoder_layers,
+            decoder_hidden_layers = model.config.decoder_layers,
+            dtype = torch_dtype,
+            device = device,
+            whisper_mode=True,
+        )
+    else:
+        logging.info('use dynamic cache')
+        global_cache = DynamicLengthEncoderDecoderCache(whisper_mode = True)
     try:
-        no_speech_token = processor.tokenizer.convert_tokens_to_ids(['<|nospeech|>'])[0]
+        no_speech_token = tokenizer.convert_tokens_to_ids(['<|nospeech|>'])[0]
     except BaseException:
         pass
+
+    if args.hqq:
+        AutoHQQHFModel.quantize_model(
+            model.model.encoder,
+            quant_config=quant_config,
+            compute_dtype=compute_dtype,
+            device=device
+        )
+        AutoHQQHFModel.quantize_model(
+            model.model.decoder,
+            quant_config=quant_config,
+            compute_dtype=compute_dtype,
+            device=device
+        )
+        AutoHQQHFModel.set_auto_linear_tags(model.model.encoder)
+        prepare_for_inference(model.model.encoder)
+        AutoHQQHFModel.set_auto_linear_tags(model.model.decoder)
+        prepare_for_inference(model.model.decoder, backend='torchao_int4')
+    
+    if args.torch_compile:
+        model.model.encoder.forward = torch.compile(
+            model.model.encoder.forward,
+            mode='reduce-overhead',
+            fullgraph=True
+        )
 
 
 async def prefill():
@@ -90,7 +153,12 @@ async def prefill():
             uuids = [batch[i][5] for i in range(len(batch))]
 
             with torch.no_grad():
-                inputs = torch.concat(inputs)
+                inputs = processor(
+                    inputs,
+                    sampling_rate=sample_rate,
+                    device = device,
+                )
+                inputs = inputs['input_features'].type(model.dtype)
                 out_encoder = model.model.encoder(inputs)
                 out_encoder = out_encoder[0]
                 langs_none_map, langs_none = {}, []
@@ -102,7 +170,7 @@ async def prefill():
                         index += 1
 
                 if len(langs_none):
-                    labels = processor.tokenizer(
+                    labels = tokenizer(
                         '<|startoftranscript|>',
                         add_special_tokens=False,
                         return_tensors='pt',
@@ -118,16 +186,14 @@ async def prefill():
                     )
                     proj = model.proj_out(out_decoder[0][:, -1:]).argmax(-1)
 
-                    langs_none = processor.tokenizer.batch_decode(proj)
+                    langs_none = tokenizer.batch_decode(proj)
                     langs_none = [l[2:-2] for l in langs_none]
                     for k, v in langs_none_map.items():
                         langs[v] = langs_none[k]
 
-                    del labels, langs_none, out_decoder[0], proj
-
                 prompt_ids = []
                 for lang in langs:
-                    lang_token = processor.tokenizer.encode(f'<|{lang}|>', add_special_tokens=False)[0]
+                    lang_token = tokenizer.encode(f'<|{lang}|>', add_special_tokens=False)[0]
                     prompt_ids.append([50258, lang_token, 50360, 50365])
 
                 inputs = torch.tensor(prompt_ids).to('cuda')
@@ -170,13 +236,6 @@ async def prefill():
 
                 for i in range(len(futures)):
                     futures[i].set_result((out_logits[i: i + 1], out_encoder[i:i + 1]))
-
-                del out_logits, out_encoder
-
-                for k in range(len(out_caches)):
-                    temp = list(out_caches[k])
-                    for j in range(len(out_caches[k])):
-                        del temp[0]
 
         except Exception as e:
             logging.warning(f"Error in prefill: {e}")
@@ -244,7 +303,6 @@ async def step():
                     futures[i].set_result((out_logits[i: i + 1],))
 
                 out = list(out)
-                del inputs, out_encoder, out[0], out_logits
 
         except Exception as e:
             print(traceback.format_exc())
@@ -269,14 +327,7 @@ async def generate(
 ):
     no_speech_prob = 0.0
     mask_penalty = torch.ones((1, model.config.vocab_size)).cuda()
-
-    with torch.no_grad():
-        inputs = processor(
-            [wav_data],
-            return_tensors='pt',
-            sampling_rate=sample_rate
-        ).to(model.device)
-        inputs = inputs['input_features'].type(model.dtype)
+    inputs = wav_data
 
     out_encoder = None
     texts = f'<|{language}|><|{last_timestamp}|>'
@@ -319,7 +370,7 @@ async def generate(
             )
 
             mask_penalty[0, idx_next[0]] = repetition_penalty
-            token = processor.tokenizer.decode(idx_next, decode_with_timestamps=True)
+            token = tokenizer.decode(idx_next, decode_with_timestamps=True)
 
             if k == 0 and 'time_first_token' not in request.scope['request']:
                 request.scope['request']['time_first_token'] = time.time()
@@ -328,7 +379,6 @@ async def generate(
             if ids == model.config.eos_token_id:
                 break
 
-            del logits, probs, inputs
             inputs = idx_next.unsqueeze(0)
 
             for r in replaces:
@@ -506,7 +556,7 @@ async def audio_completions(
                 start=start_timestamp,
                 end=end_timestamp,
                 text=substring.strip(),
-                tokens=processor.tokenizer.encode(substring.strip(), add_special_tokens=False),
+                tokens=tokenizer.encode(substring.strip(), add_special_tokens=False),
                 temperature=temperature,
                 avg_logprob=0.0,
                 compression_ratio=1.0,

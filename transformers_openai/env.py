@@ -80,10 +80,16 @@ def parse_arguments():
         help='Preallocate KV Cache for faster inference (default: %(default)s, env: STATIC_CACHE)'
     )
     parser.add_argument(
-        '--static-cache-max-length',
+        '--static-cache-encoder-max-length',
         type=int,
-        default=int(os.environ.get('STATIC_CACHE_MAX_LENGTH', '8192')),
-        help='Maximum concurrent requests (default: %(default)s, env: STATIC_CACHE_MAX_LENGTH)'
+        default=int(os.environ.get('STATIC_CACHE_ENCODER_MAX_LENGTH', '256')),
+        help='Maximum concurrent requests (default: %(default)s, env: STATIC_CACHE_ENCODER_MAX_LENGTH)'
+    )
+    parser.add_argument(
+        '--static-cache-decoder-max-length',
+        type=int,
+        default=int(os.environ.get('STATIC_CACHE_DECODER_MAX_LENGTH', '256')),
+        help='Maximum concurrent requests (default: %(default)s, env: STATIC_CACHE_DECODER_MAX_LENGTH)'
     )
     parser.add_argument(
         '--accelerator-type', default=os.environ.get('ACCELERATOR_TYPE', 'cuda'),
@@ -100,6 +106,16 @@ def parse_arguments():
         type=lambda x: x.lower() == 'true',
         default=os.environ.get('TORCH_AUTOGRAD_PROFILING', 'false').lower() == 'true',
         help='Use torch.autograd.profiler.profile() to profile prefill and step (default: %(default)s, env: TORCH_AUTOGRAD_PROFILING)'
+    )
+    parser.add_argument(
+        '--hqq', type=lambda x: x.lower() == 'true',
+        default=os.environ.get('HQQ', 'true').lower() == 'false',
+        help='int4 quantization using HQQ (default: %(default)s, env: HQQ)'
+    )
+    parser.add_argument(
+        '--torch-compile', type=lambda x: x.lower() == 'true',
+        default=os.environ.get('TORCH_COMPILE', 'true').lower() == 'false',
+        help='Torch compile necessary forwards, can speed up at least 1.5X (default: %(default)s, env: TORCH_COMPILE)'
     )
 
     args = parser.parse_args()

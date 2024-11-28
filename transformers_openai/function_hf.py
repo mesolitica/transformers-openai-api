@@ -15,7 +15,6 @@ def load_hf_model():
         module_name, class_name = args.model_type.rsplit('.', 1)
         module = importlib.import_module(module_name)
         class_ = getattr(module, class_name)
-
     else:
         class_ = getattr(transformers, args.model_type)
 
@@ -32,10 +31,14 @@ def load_hf_model():
 
 
 def load_hf_processor():
-    processor = getattr(transformers, args.processor_type).from_pretrained(
-        args.hf_model,
-    )
-    return processor
+    if '.' in args.processor_type:
+        module_name, class_name = args.processor_type.rsplit('.', 1)
+        module = importlib.import_module(module_name)
+        class_ = getattr(module, class_name)
+    else:
+        class_ = getattr(transformers, args.processor_type)
+
+    return class_.from_pretrained(args.hf_model)
 
 
 def load_hf_tokenizer():

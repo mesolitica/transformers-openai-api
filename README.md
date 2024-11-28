@@ -233,12 +233,13 @@ data: {"id": "20e9d233-6f6c-4dc4-95a9-7dcf077e9b57", "choices": [{"delta": {"con
 ### Run Whisper
 
 ```bash
-python3.10 -m transformers_openai.main \
+python3 -m transformers_openai.main \
 --host 0.0.0.0 --port 7088 \
 --model-type transformers_openai.models.WhisperForConditionalGeneration \
---processor-type AutoProcessor \
+--processor-type transformers_openai.models.WhisperFeatureExtractor \
 --serving-type whisper \
---hf-model openai/whisper-large-v3
+--hf-model openai/whisper-large-v3 \
+--tokenizer-use-fast false
 ```
 
 #### Example OpenAI library

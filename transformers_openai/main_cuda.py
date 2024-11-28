@@ -172,11 +172,6 @@ async def prefill():
                 if args.torch_autograd_profiling:
                     print(prof.key_averages().table(sort_by='self_cpu_time_total'))
 
-                for k in range(len(out_caches)):
-                    temp = list(out_caches[k])
-                    for j in range(len(out_caches[k])):
-                        del temp[0]
-
         except Exception as e:
             logging.warning(f"Error in prefill: {e}")
             futures = [batch[i][0] for i in range(len(batch))]
@@ -347,8 +342,7 @@ async def stream(inputs, created, form, request):
 
             if ids in terminators:
                 break
-
-            del logits, probs, inputs
+                
             inputs = idx_next.unsqueeze(0)
 
             data = {
