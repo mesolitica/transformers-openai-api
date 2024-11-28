@@ -1,4 +1,5 @@
 from typing import List, Tuple, Optional, Dict, Any
+from transformers_openai.queue import AsyncUserQueue
 from transformers.cache_utils import Cache
 from collections import defaultdict
 import torch
@@ -148,7 +149,6 @@ class DynamicLengthEncoderDecoderCache(Cache):
 
         k = pad_kv(keys)
         v = pad_kv(values)
-        
         return k, v
 
     def get_seq_length(self, layer_idx: Optional[int] = 0) -> int:
@@ -190,6 +190,7 @@ class StaticLengthEncoderDecoderCache(Cache):
         self.whisper_mode = whisper_mode
         self.dtype = dtype
         self.device = device
+        self.queue = AsyncUserQueue(batch_size)
 
         encoder_cache_shape = (
             encoder_head_size,
@@ -203,36 +204,36 @@ class StaticLengthEncoderDecoderCache(Cache):
         )
 
         for k in range(encoder_hidden_layers):
-            new_layer_key_caches = []
-            new_layer_value_caches = []
+            key_caches = []
+            value_caches = []
             e_key_caches = []
             e_value_caches = []
             for i in range(batch_size):
-                new_layer_key_cache = torch.zeros(
+                key_cache = torch.zeros(
                     decoder_cache_shape, dtype=self.dtype, device=self.device)
-                new_layer_value_cache = torch.zeros(
+                value_cache = torch.zeros(
                     decoder_cache_shape, dtype=self.dtype, device=self.device)
 
                 e_key_cache = torch.zeros(encoder_cache_shape, dtype=self.dtype, device=self.device)
                 e_value_cache = torch.zeros(encoder_cache_shape, dtype=self.dtype, device=self.device)
 
-                torch._dynamo.mark_static_address(new_layer_key_cache)
-                torch._dynamo.mark_static_address(new_layer_value_cache)
+                torch._dynamo.mark_static_address(key_cache)
+                torch._dynamo.mark_static_address(value_cache)
                 torch._dynamo.mark_static_address(e_key_cache)
                 torch._dynamo.mark_static_address(e_value_cache)
 
-                new_layer_key_caches.append(new_layer_key_cache)
-                new_layer_value_caches.append(new_layer_value_cache)
+                key_caches.append(key_cache)
+                value_caches.append(value_cache)
                 e_key_caches.append(e_key_cache)
                 e_value_caches.append(e_value_cache)
 
                 # e_key_cache[:, :, :] = existing_cache[k][2][i].clone()
                 # e_value_cache[:, :, :] = existing_cache[k][3][i].clone()
 
-            self.key_cache.append(new_layer_key_caches)
-            self.value_cache.append(new_layer_value_caches)
-            self.e_key_cache.append(e_key_caches)
-            self.e_value_cache.append(e_value_caches)
+            self.key_cache.append(key_caches)
+            self.value_cache.append(value_caches)
+            self.cross_key_cache.append(e_key_caches)
+            self.cross_value_cache.append(e_value_caches)
 
 
     def get_cross_kv(self, layer_idx):
@@ -282,21 +283,17 @@ class StaticLengthEncoderDecoderCache(Cache):
         layer_idx: int,
         cache_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        cache_position = cache_kwargs.get("cache_position")
         keys, values = [], []
-        for i, k in enumerate(self.current_uuid):
-            
-            self.key_cache[layer_idx][k] = torch.cat(
-                [self.key_cache[layer_idx][k], key_states[i: i + 1]], dim=-2)
-            self.value_cache[layer_idx][k] = torch.cat(
-                [self.value_cache[layer_idx][k], value_states[i: i + 1]], dim=-2)
-
-            keys.append(self.key_cache[layer_idx][k])
-            values.append(self.value_cache[layer_idx][k])
-
-        k = pad_kv(keys)
-        v = pad_kv(values)
+        for i in range(cache_position.shape[0]):
+            k_out = self.key_cache[layer_idx][self.current_position[i]]
+            v_out = self.value_cache[layer_idx][self.current_position[i]]
+            k_out[:, :, cache_position[i]] = key_states[i].clone()
+            v_out[:, :, cache_position[i]] = value_states[i].clone()
+            keys.append(k_out)
+            values.append(v_out)
         
-        return k, v
+        return torch.stack(keys, 0), torch.stack(values, 0)
 
     def get_seq_length(self, layer_idx: Optional[int] = 0) -> int:
         """Returns the sequence length of the cached states. A layer index can be optionally passed."""
