@@ -266,6 +266,8 @@ python3 -m transformers_openai.main \
 - `1500` is max length of encoder, https://huggingface.co/openai/whisper-large-v3/blob/main/config.json#L37
 - `446` is max length of decoder, https://huggingface.co/openai/whisper-large-v3/blob/main/config.json#L38
 
+**Starting is super slow because need to warmup the torch compile, after that should be fast**.
+
 #### Example OpenAI library
 
 ```python

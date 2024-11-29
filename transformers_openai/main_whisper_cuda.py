@@ -94,8 +94,7 @@ def prefill_step(model, inputs, last_hidden_state):
         out_logits = model.proj_out(out[0][:, -1:])
         return out, out_logits
 
-def decode_one_tokens(model, inputs, attention_mask, out_encoder, lengths):
-    position_ids = torch.tensor([[l - 1 for l in lengths]]).T.to(device)
+def decode_one_tokens(model, inputs, attention_mask, out_encoder, position_ids):
     out = model.model.decoder(
         inputs,
         attention_mask=attention_mask,
@@ -332,7 +331,8 @@ async def step():
                     dtype=torch_dtype,
                     ones=False,
                 )
-                out_logits = decode_one_tokens(model, inputs, attention_mask, out_encoder, lengths)
+                position_ids = torch.tensor([[l - 1 for l in lengths]]).T.to(device)
+                out_logits = decode_one_tokens(model, inputs, attention_mask, out_encoder, position_ids)
 
                 for i in range(len(futures)):
                     futures[i].set_result((out_logits[i: i + 1],))
