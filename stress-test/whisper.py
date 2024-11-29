@@ -9,15 +9,12 @@ gpu_stats = gpustat.GPUStatCollection.new_query()
 """
 Make sure already running this,
 
-CUDA_VISIBLE_DEVICES=0 HF_TRANSFER=1 \
+CUDA_VISIBLE_DEVICES=2 HF_TRANSFER=1 \
 python3.10 -m transformers_openai.main \
 --host 0.0.0.0 --port 7088 \
---attn-implementation sdpa \
 --model-type transformers_openai.models.WhisperForConditionalGeneration \
---processor-type AutoProcessor \
---serving-type whisper --torch-dtype bfloat16 --cache-type none \
---continuous-batching true \
---hf-model openai/whisper-large-v3 \
+--processor-type transformers_openai.models.WhisperFeatureExtractor \
+--serving-type whisper --hf-model openai/whisper-large-v3 \
 --continuous-batching-batch-size 10
 # can increase batch size, i got OOM
 """

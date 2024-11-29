@@ -4,9 +4,13 @@ from transformers_openai.middleware import InsertMiddleware, HEADERS
 from fastapi import FastAPI, Request
 from fastapi import File, Form, UploadFile
 from sse_starlette import EventSourceResponse
+from io import BytesIO
 import asyncio
 import uvicorn
 import logging
+import wave
+import numpy as np
+import os
 
 if args.serving_type == 'chat':
     if args.accelerator_type == 'cuda':
@@ -99,6 +103,43 @@ async def shutdown_event():
     except asyncio.CancelledError:
         pass
 
+if args.torch_compile and args.static_cache:
+    if args.serving_type == 'whisper':
+        async def warm(index=0, repeat=2):
+            logging.info(f'{index} warming up whisper torch compile static cache')
+            
+            """
+            file = BytesIO()
+            sample_rate = 16000
+            samples = np.zeros((30 * sample_rate,)).astype(np.int16)
+            with wave.open(file, 'wb') as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)  
+                wf.setframerate(sample_rate)
+                wf.writeframes(samples.tobytes())
+            file.seek(0)
+            """
+
+            file = os.path.join(os.path.dirname(__file__), 'warmup.wav')
+            for k in range(repeat):
+                generator = audio_completions(
+                    file=file,
+                    language=None,
+                    stream=True,
+                    request={'uuid': f'{index}-{k}'}
+                )
+                r = await generator
+                async for t in r:
+                    logging.info(f'{index} {k} {t}')
+
+        @app.on_event('startup')
+        async def warmup():
+            for i in range(1, args.continuous_batching_batch_size + 1, 1):
+                tasks = []
+                for index in range(i):
+                    task = asyncio.create_task(warm(index=index))
+                    tasks.append(task)
+                await asyncio.gather(*tasks)
 
 if __name__ == "__main__":
     uvicorn.run(

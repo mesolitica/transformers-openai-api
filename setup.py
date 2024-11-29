@@ -11,4 +11,5 @@ setuptools.setup(
     description='OpenAI compatibility using FastAPI HuggingFace Transformers.',
     author='huseinzol05',
     url='https://github.com/mesolitica/transformers-openai-api',
+    include_package_data=True
 )

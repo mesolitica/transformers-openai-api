@@ -65,14 +65,9 @@ def parse_arguments():
         help='microsleep to group continuous batching, 1 / 1e-4 = 10k steps for one second (default: %(default)s, env: CONTINUOUS_BATCHING_MICROSLEEP)'
     )
     parser.add_argument(
-        '--continuous-batching-batch-size', type=float,
+        '--continuous-batching-batch-size', type=int,
         default=int(os.environ.get('CONTINUOUS_BATCHING_BATCH_SIZE', '20')),
         help='maximum of batch size during continuous batching (default: %(default)s, env: CONTINUOUS_BATCHING_BATCH_SIZE)'
-    )
-    parser.add_argument(
-        '--continuous-batching-warmup-batch-size', type=float,
-        default=int(os.environ.get('CONTINUOUS_BATCHING_WARMUP_BATCH_SIZE', '5')),
-        help='maximum of batch size during continuous batching (default: %(default)s, env: CONTINUOUS_BATCHING_WARMUP_BATCH_SIZE)'
     )
     parser.add_argument(
         '--static-cache', type=lambda x: x.lower() == 'true',

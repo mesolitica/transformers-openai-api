@@ -1,5 +1,5 @@
 from typing import List, Tuple, Optional, Dict, Any
-from transformers_openai.queue import AsyncUserQueue
+from transformers_openai.queue import AsyncUserQueue, UserQueue
 from transformers.cache_utils import Cache
 from collections import defaultdict
 import torch
@@ -93,8 +93,8 @@ class DynamicLengthEncoderDecoderCache(Cache):
         if layer_idx < len(self):
             keys, values = [], []
             for k in self.current_uuid:
-                keys.append(self.key_cache[layer_idx][k])
-                values.append(self.value_cache[layer_idx][k])
+                keys.append(self.cross_key_cache[layer_idx][k])
+                values.append(self.cross_value_cache[layer_idx][k])
 
             k = pad_kv(keys)
             v = pad_kv(values)
@@ -187,10 +187,11 @@ class StaticLengthEncoderDecoderCache(Cache):
         self.cross_key_cache: List[torch.Tensor] = []
         self.cross_value_cache: List[torch.Tensor] = []
         self.current_uuid = []
+        self.current_position = []
         self.whisper_mode = whisper_mode
         self.dtype = dtype
         self.device = device
-        self.queue = AsyncUserQueue(batch_size)
+        self.queue = UserQueue(batch_size)
 
         encoder_cache_shape = (
             encoder_head_size,
@@ -239,13 +240,10 @@ class StaticLengthEncoderDecoderCache(Cache):
     def get_cross_kv(self, layer_idx):
         if layer_idx < len(self):
             keys, values = [], []
-            for k in self.current_uuid:
-                keys.append(self.key_cache[layer_idx][k])
-                values.append(self.value_cache[layer_idx][k])
-
-            k = pad_kv(keys)
-            v = pad_kv(values)
-            return k, v
+            for i in range(len(self.current_position)):
+                keys.append(self.key_cache[layer_idx][self.current_position[i]])
+                values.append(self.value_cache[layer_idx][self.current_position[i]])
+            return torch.stack(keys, 0), torch.stack(values, 0)
         else:
             raise KeyError(
                 f"Cache only has {len(self)} layers, attempted to access layer with index {layer_idx}")
@@ -284,12 +282,13 @@ class StaticLengthEncoderDecoderCache(Cache):
         cache_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         cache_position = cache_kwargs.get("cache_position")
+        
         keys, values = [], []
-        for i in range(cache_position.shape[0]):
+        for i in range(len(self.current_position)):
             k_out = self.key_cache[layer_idx][self.current_position[i]]
             v_out = self.value_cache[layer_idx][self.current_position[i]]
-            k_out[:, :, cache_position[i]] = key_states[i].clone()
-            v_out[:, :, cache_position[i]] = value_states[i].clone()
+            k_out[:, cache_position[i]] = key_states[i].clone()
+            v_out[:, cache_position[i]] = value_states[i].clone()
             keys.append(k_out)
             values.append(v_out)
         
@@ -301,7 +300,7 @@ class StaticLengthEncoderDecoderCache(Cache):
         if len(self.key_cache) <= layer_idx:
             return 0
         
-        lengths = [self.key_cache[0][k].shape[2] for k in self.current_uuid]
+        lengths = [self.key_cache[0][k].shape[1] for k in self.current_position]
         return max(lengths)
 
     def get_max_length(self) -> Optional[int]:

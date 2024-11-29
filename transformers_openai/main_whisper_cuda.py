@@ -94,27 +94,32 @@ def prefill_step(model, inputs, last_hidden_state):
         out_logits = model.proj_out(out[0][:, -1:])
         return out, out_logits
 
-# def decode_one_tokens(model, inputs, lengths):
-#     position_ids = torch.tensor([[l + 3 for l in lengths]]).T.to(device)
-#                 out = model.model.decoder(
-#                     inputs,
-#                     encoder_hidden_states=out_encoder,
-#                     past_key_values=global_cache,
-#                     position_ids=position_ids,
-#                     use_cache=True,
-#                     return_dict=False,
-#                 )
-#                 out_logits = model.proj_out(out[0][:, -1:])
+def decode_one_tokens(model, inputs, attention_mask, out_encoder, lengths):
+    position_ids = torch.tensor([[l - 1 for l in lengths]]).T.to(device)
+    out = model.model.decoder(
+        inputs,
+        attention_mask=attention_mask,
+        encoder_hidden_states=out_encoder,
+        past_key_values=global_cache,
+        position_ids=position_ids,
+        cache_position=position_ids,
+        use_cache=True,
+        return_dict=False,
+    )
+    out_logits = model.proj_out(out[0][:, -1:])
+    return out_logits
 
 def load_model():
     global model, processor, tokenizer, no_speech_token, global_cache
+    global predict_language, prefill_step, decode_one_tokens
+
     model = load_hf_model()
     processor = load_hf_processor()
     tokenizer = load_hf_tokenizer()
     if args.static_cache:
         logging.info('use static cache')
         global_cache = StaticLengthEncoderDecoderCache(
-            batch_size = args.continuous_batching_microsleep, 
+            batch_size = args.continuous_batching_batch_size, 
             encoder_max_length = args.static_cache_encoder_max_length,
             decoder_max_length = args.static_cache_decoder_max_length,
             encoder_head_size = model.config.encoder_attention_heads,
@@ -153,12 +158,14 @@ def load_model():
         AutoHQQHFModel.set_auto_linear_tags(model.model.decoder)
         prepare_for_inference(model.model.decoder, backend='torchao_int4')
     
-    if args.torch_compile:
+    if args.torch_compile and args.static_cache:
+        logging.info('enabling torch compile for whisper static cache')
         model.model.encoder.forward = torch.compile(
             model.model.encoder.forward,
         )
-        predict_language = torch.compile(predict_language)
-        prefill_step = torch.compile(prefill_step)
+        predict_language = torch.compile(predict_language, mode='reduce-overhead', fullgraph=True)
+        prefill_step = torch.compile(prefill_step, mode='reduce-overhead', fullgraph=True)
+        decode_one_tokens = torch.compile(decode_one_tokens, mode='reduce-overhead', fullgraph=True)
 
 async def prefill():
     need_sleep = True
@@ -173,7 +180,7 @@ async def prefill():
                     request = await asyncio.wait_for(prefill_queue.get(), timeout=1e-4)
                     batch.append(request)
                     if args.static_cache:
-                        l = await global_cache.queue.available_slots()
+                        l = global_cache.queue.available_slots()
                     else:
                         l = args.continuous_batching_batch_size
                     if len(batch) >= l:
@@ -204,7 +211,7 @@ async def prefill():
                 langs_none_map, langs_none = {}, []
                 index = 0
                 for i in range(len(langs)):
-                    if langs[i] is None:
+                    if langs[i] is None or langs[i] == 'none' or langs[i] == 'null':
                         langs_none_map[index] = i
                         langs_none.append(out_encoder[i:i + 1])
                         index += 1
@@ -233,7 +240,7 @@ async def prefill():
 
                 if args.static_cache:
                     for i in range(len(uuids)):
-                        index = await global_cache.queue.enter(uuids[i])
+                        index = global_cache.queue.enter(uuids[i])
                         for k in range(len(out_caches)):
                             arange = torch.arange(out_caches[k][0][i].shape[1], device=device)
                             global_cache.key_cache[k][index][:, arange, :] = out_caches[k][0][i].clone()
@@ -266,7 +273,7 @@ async def prefill():
                             global_cache.cross_value_cache.append(cross_value_cache)
 
                 for i in range(len(futures)):
-                    futures[i].set_result((out_logits[i: i + 1], out_encoder[i:i + 1]))
+                    futures[i].set_result((out_logits[i: i + 1], out_encoder[i:i + 1], langs[i]))
 
         except Exception as e:
             logging.warning(f"Error in prefill: {e}")
@@ -310,6 +317,8 @@ async def step():
             global_cache.current_uuid = uuids
             if args.static_cache:
                 max_len = args.static_cache_decoder_max_length
+                current_position = [global_cache.queue.users.index(i) for i in uuids]
+                global_cache.current_position = current_position
             else:
                 max_len = max(lengths)
             with torch.no_grad():
@@ -323,22 +332,10 @@ async def step():
                     dtype=torch_dtype,
                     ones=False,
                 )
-                position_ids = torch.tensor([[l - 1 for l in lengths]]).T.to(device)
-                out = model.model.decoder(
-                    inputs,
-                    attention_mask=attention_mask,
-                    encoder_hidden_states=out_encoder,
-                    past_key_values=global_cache,
-                    position_ids=position_ids,
-                    use_cache=True,
-                    return_dict=False,
-                )
-                out_logits = model.proj_out(out[0][:, -1:])
+                out_logits = decode_one_tokens(model, inputs, attention_mask, out_encoder, lengths)
 
                 for i in range(len(futures)):
                     futures[i].set_result((out_logits[i: i + 1],))
-
-                out = list(out)
 
         except Exception as e:
             print(traceback.format_exc())
@@ -366,13 +363,7 @@ async def generate(
     inputs = wav_data
 
     out_encoder = None
-    texts = f'<|{language}|><|{last_timestamp}|>'
-
-    if response_format != 'srt':
-        text = texts
-        if response_format == 'json':
-            text = json.dumps({'token': texts})
-        yield text
+    texts = ''
 
     if isinstance(request, dict):
         uuid = request['uuid']
@@ -396,6 +387,15 @@ async def generate(
 
             if out_encoder is None:
                 out_encoder = out[1]
+                language = out[2]
+
+                texts += f'<|{language}|><|{last_timestamp}|>'
+
+                if response_format != 'srt':
+                    text = texts
+                    if response_format == 'json':
+                        text = json.dumps({'token': texts})
+                    yield text
 
             idx_next, probs = sample(
                 logits,
@@ -408,7 +408,7 @@ async def generate(
             mask_penalty[0, idx_next[0]] = repetition_penalty
             token = tokenizer.decode(idx_next, decode_with_timestamps=True)
 
-            if k == 0 and 'time_first_token' not in request.scope['request']:
+            if k == 0 and not isinstance(request, dict):
                 request.scope['request']['time_first_token'] = time.time()
 
             ids = idx_next[0].tolist()
@@ -464,11 +464,21 @@ async def generate(
 
     finally:
         logging.debug(f'purging {uuid} KV cache')
-        for i in range(len(global_cache.key_cache)):
-            key_cache = global_cache.key_cache[i].pop(uuid, None)
-            value_cache = global_cache.value_cache[i].pop(uuid, None)
-            cross_key_cache = global_cache.cross_key_cache[i].pop(uuid, None)
-            cross_value_cache = global_cache.cross_value_cache[i].pop(uuid, None)
+        if args.static_cache:
+            index = global_cache.queue.users.index(uuid)
+            for i in range(len(global_cache.key_cache)):
+                global_cache.key_cache[i][index].zero_()
+                global_cache.value_cache[i][index].zero_()
+                global_cache.cross_key_cache[i][index].zero_()
+                global_cache.cross_key_cache[i][index].zero_()
+            global_cache.queue.leave(uuid)
+        else:
+            for i in range(len(global_cache.key_cache)):
+                key_cache = global_cache.key_cache[i].pop(uuid, None)
+                value_cache = global_cache.value_cache[i].pop(uuid, None)
+                cross_key_cache = global_cache.cross_key_cache[i].pop(uuid, None)
+                cross_value_cache = global_cache.cross_value_cache[i].pop(uuid, None)
+
         torch.cuda.empty_cache()
         gc.collect()
 
@@ -477,6 +487,10 @@ async def audio(file, language, response_format, repetition_penalty, temperature
     wav_data = np.array([], dtype=np.float32)
     last_i = 0
     last_timestamp = 0.0
+    if isinstance(request, dict):
+        uuid = request['uuid']
+    else:
+        uuid = request.scope['request']['uuid']
     try:
         streamer = StreamReader(
             src=file,
@@ -533,25 +547,26 @@ async def audio(file, language, response_format, repetition_penalty, temperature
         audio_len = len(wav_data) / sample_rate
         last_timestamp += audio_len
 
-        request.scope['request']['time_max_tokens'] = time.time()
-        request.scope['request']['total_tokens'] = last_i
-        request.scope['request']['total_seconds'] = last_timestamp
+        if not isinstance(request, dict):
+            request.scope['request']['time_max_tokens'] = time.time()
+            request.scope['request']['total_tokens'] = last_i
+            request.scope['request']['total_seconds'] = last_timestamp
 
     except asyncio.CancelledError as e:
-        logging.warning(f"model step cancelled {request.scope['request']['uuid']}")
+        logging.warning(f"model step cancelled {uuid}")
         yield ServerSentEvent(**{"data": str(e)})
 
 
 async def audio_completions(
     file,
-    language,
-    response_format,
-    timestamp_granularities,
-    stream,
-    repetition_penalty,
-    temperature,
-    top_p,
-    top_k,
+    language=None,
+    response_format='text',
+    timestamp_granularities='segment',
+    stream=False,
+    repetition_penalty=1.0,
+    temperature=0.0,
+    top_p=0.95,
+    top_k=50,
     request: Request = None,
 ):
     if model is None:
@@ -567,7 +582,6 @@ async def audio_completions(
         top_k=top_k,
         request=request,
     )
-
     if stream:
         return func
     else:

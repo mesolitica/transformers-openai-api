@@ -32,18 +32,20 @@ python3 -m transformers_openai.main --help
 ```
 
 ```text
-usage: main.py [-h] [--host HOST] [--port PORT] [--loglevel LOGLEVEL] [--model-type MODEL_TYPE] [--tokenizer-type TOKENIZER_TYPE]
-               [--tokenizer-use-fast TOKENIZER_USE_FAST] [--processor-type PROCESSOR_TYPE] [--hf-model HF_MODEL]
-               [--hotload HOTLOAD] [--attn-implementation ATTN_IMPLEMENTATION] [--torch-dtype TORCH_DTYPE]
-               [--architecture-type {decoder,encoder-decoder}] [--serving-type {chat,whisper}] [--cache-type CACHE_TYPE]
-               [--continuous-batching CONTINUOUS_BATCHING] [--continuous-batching-microsleep CONTINUOUS_BATCHING_MICROSLEEP]
-               [--continuous-batching-batch-size CONTINUOUS_BATCHING_BATCH_SIZE] [--accelerator-type ACCELERATOR_TYPE]
-               [--max-concurrent MAX_CONCURRENT] [--neuronx-n-positions NEURONX_N_POSITIONS]
-               [--neuronx-batch-size NEURONX_BATCH_SIZE]
+usage: main.py [-h] [--host HOST] [--port PORT] [--loglevel LOGLEVEL] [--model-type MODEL_TYPE]
+               [--tokenizer-type TOKENIZER_TYPE] [--tokenizer-use-fast TOKENIZER_USE_FAST]
+               [--processor-type PROCESSOR_TYPE] [--hf-model HF_MODEL] [--torch-dtype TORCH_DTYPE]
+               [--architecture-type {decoder,encoder-decoder}] [--serving-type {chat,whisper}]
+               [--continuous-batching-microsleep CONTINUOUS_BATCHING_MICROSLEEP]
+               [--continuous-batching-batch-size CONTINUOUS_BATCHING_BATCH_SIZE] [--static-cache STATIC_CACHE]
+               [--static-cache-encoder-max-length STATIC_CACHE_ENCODER_MAX_LENGTH]
+               [--static-cache-decoder-max-length STATIC_CACHE_DECODER_MAX_LENGTH] [--accelerator-type ACCELERATOR_TYPE]
+               [--max-concurrent MAX_CONCURRENT] [--torch-autograd-profiling TORCH_AUTOGRAD_PROFILING] [--hqq HQQ]
+               [--torch-compile TORCH_COMPILE]
 
 Configuration parser
 
-optional arguments:
+options:
   -h, --help            show this help message and exit
   --host HOST           host name to host the app (default: 0.0.0.0, env: HOSTNAME)
   --port PORT           port to host the app (default: 7088, env: PORT)
@@ -57,32 +59,34 @@ optional arguments:
   --processor-type PROCESSOR_TYPE
                         Processor type (default: AutoTokenizer, env: PROCESSOR_TYPE)
   --hf-model HF_MODEL   Hugging Face model (default: mesolitica/malaysian-llama2-7b-32k-instructions, env: HF_MODEL)
-  --hotload HOTLOAD     Enable hot loading (default: True, env: HOTLOAD)
-  --attn-implementation ATTN_IMPLEMENTATION
-                        Attention implementation (default: sdpa, env: ATTN_IMPLEMENTATION)
   --torch-dtype TORCH_DTYPE
                         Torch data type (default: bfloat16, env: TORCH_DTYPE)
   --architecture-type {decoder,encoder-decoder}
                         Architecture type (default: decoder, env: ARCHITECTURE_TYPE)
   --serving-type {chat,whisper}
                         Serving type (default: chat, env: SERVING_TYPE)
-  --cache-type CACHE_TYPE
-                        Cache type (default: DynamicCache, env: CACHE_TYPE)
-  --continuous-batching CONTINUOUS_BATCHING
-                        Enable continuous batching (default: False, env: CONTINUOUS_BATCHING)
   --continuous-batching-microsleep CONTINUOUS_BATCHING_MICROSLEEP
-                        microsleep to group continuous batching, 1 / 1e-3 = 1k steps for second (default: 0.0001, env:
-                        CONTINUOUS_BATCHING_MICROSLEEP)
+                        microsleep to group continuous batching, 1 / 1e-4 = 10k steps for one second (default: 0.0001,
+                        env: CONTINUOUS_BATCHING_MICROSLEEP)
   --continuous-batching-batch-size CONTINUOUS_BATCHING_BATCH_SIZE
-                        maximum of batch size during continuous batching (default: 20, env: CONTINUOUS_BATCHING_BATCH_SIZE)
+                        maximum of batch size during continuous batching (default: 20, env:
+                        CONTINUOUS_BATCHING_BATCH_SIZE)
+  --static-cache STATIC_CACHE
+                        Preallocate KV Cache for faster inference (default: False, env: STATIC_CACHE)
+  --static-cache-encoder-max-length STATIC_CACHE_ENCODER_MAX_LENGTH
+                        Maximum concurrent requests (default: 256, env: STATIC_CACHE_ENCODER_MAX_LENGTH)
+  --static-cache-decoder-max-length STATIC_CACHE_DECODER_MAX_LENGTH
+                        Maximum concurrent requests (default: 256, env: STATIC_CACHE_DECODER_MAX_LENGTH)
   --accelerator-type ACCELERATOR_TYPE
                         Accelerator type (default: cuda, env: ACCELERATOR_TYPE)
   --max-concurrent MAX_CONCURRENT
                         Maximum concurrent requests (default: 100, env: MAX_CONCURRENT)
-  --neuronx-n-positions NEURONX_N_POSITIONS
-                        NeuronX number of positions (default: 2048, env: N_POSITIONS)
-  --neuronx-batch-size NEURONX_BATCH_SIZE
-                        NeuronX batch size (default: 1, env: BATCH_SIZE)
+  --torch-autograd-profiling TORCH_AUTOGRAD_PROFILING
+                        Use torch.autograd.profiler.profile() to profile prefill and step (default: False, env:
+                        TORCH_AUTOGRAD_PROFILING)
+  --hqq HQQ             int4 quantization using HQQ (default: False, env: HQQ)
+  --torch-compile TORCH_COMPILE
+                        Torch compile necessary forwards, can speed up at least 1.5X (default: False, env: TORCH_COMPILE)
 ```
 
 **We support both args and OS environment**.
@@ -242,6 +246,26 @@ python3 -m transformers_openai.main \
 --tokenizer-use-fast false
 ```
 
+#### Torch compile static cache
+
+To use Torch compile, you must use static cache,
+
+```bash
+python3 -m transformers_openai.main \
+--host 0.0.0.0 --port 7088 \
+--model-type transformers_openai.models.WhisperForConditionalGeneration \
+--processor-type transformers_openai.models.WhisperFeatureExtractor \
+--serving-type whisper \
+--hf-model openai/whisper-large-v3 \
+--tokenizer-use-fast false \
+--static-cache true \
+--static-cache-encoder-max-length 1500 --static-cache-decoder-max-length 446 \
+--continuous-batching-batch-size 2 --torch-compile true
+```
+
+- `1500` is max length of encoder, https://huggingface.co/openai/whisper-large-v3/blob/main/config.json#L37
+- `446` is max length of decoder, https://huggingface.co/openai/whisper-large-v3/blob/main/config.json#L38
+
 #### Example OpenAI library
 
 ```python
@@ -344,6 +368,11 @@ INFO:     127.0.0.1:60416 - "POST /chat/completions HTTP/1.1" 200 OK
 WARNING:root:
 WARNING:root:Cancelling ae6af2a2-c1a3-4e5f-a9cf-eb1cf645870e due to disconnect
 ```
+
+## Tips with Torch Compile
+
+1. Compiling static cache use a lot of GPU memory, make sure set low batch size.
+2. You can set `TORCHINDUCTOR_CACHE_DIR` to cache torch compiled, check example at https://github.com/huggingface/speech-to-speech/blob/main/s2s_pipeline.py#L48
 
 ## [Stress test](stress-test)
 

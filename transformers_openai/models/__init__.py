@@ -1,4 +1,3 @@
 from .t5 import T5ForConditionalGeneration
 from .whisper import WhisperForConditionalGeneration
-from .static_whisper import WhisperForConditionalGeneration as StaticWhisperForConditionalGeneration
 from .whisper_utils import WhisperFeatureExtractor

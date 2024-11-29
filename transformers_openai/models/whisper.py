@@ -638,6 +638,7 @@ class WhisperSdpaAttention(WhisperAttention):
         attention_mask: Optional[torch.Tensor] = None,
         layer_head_mask: Optional[torch.Tensor] = None,
         output_attentions: bool = False,
+        cache_position: Optional[torch.LongTensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         """Input shape: Batch x Time x Channel"""
         if output_attentions or layer_head_mask is not None:
@@ -683,11 +684,13 @@ class WhisperSdpaAttention(WhisperAttention):
             # reuse k, v, self_attention
             key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
             value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
+            cache_kwargs = {"cache_position": cache_position}
             if isinstance(past_key_value, Cache):
                 key_states, value_states = past_key_value.update(
                     key_states,
                     value_states,
                     self.layer_idx,
+                    cache_kwargs,
                 )
             else:
                 key_states = torch.cat([past_key_value[0], key_states], dim=2)
@@ -871,6 +874,7 @@ class WhisperDecoderLayer(nn.Module):
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = True,
+        cache_position: Optional[torch.LongTensor] = None,
     ) -> torch.Tensor:
         """
         Args:
@@ -905,6 +909,7 @@ class WhisperDecoderLayer(nn.Module):
             attention_mask=attention_mask,
             layer_head_mask=layer_head_mask,
             output_attentions=output_attentions,
+            cache_position=cache_position,
         )
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
         hidden_states = residual + hidden_states
@@ -1332,6 +1337,7 @@ class WhisperDecoder(WhisperPreTrainedModel):
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
+        cache_position: Optional[torch.LongTensor] = None,
     ):
         r"""
         Args:
@@ -1496,6 +1502,7 @@ class WhisperDecoder(WhisperPreTrainedModel):
                     None,  # past_key_value
                     output_attentions,
                     use_cache,
+                    cache_position,
                 )
             else:
                 layer_outputs = decoder_layer(
@@ -1509,6 +1516,7 @@ class WhisperDecoder(WhisperPreTrainedModel):
                     past_key_value=past_key_value,
                     output_attentions=output_attentions,
                     use_cache=use_cache,
+                    cache_position=cache_position,
                 )
             hidden_states = layer_outputs[0]
 
