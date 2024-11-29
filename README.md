@@ -8,6 +8,7 @@ Lightweight continuous batching OpenAI compatibility using HuggingFace Transform
 4. Properly cleanup KV Cache after each requests.
 5. Support Encoder-Decoder T5.
 6. Support Audio Transcriptions with streaming token using Whisper.
+7. Support Torch compile static cache for Whisper.
 
 ## how to install
 
